@@ -8,8 +8,8 @@
 
 namespace godot {
 
-class pkpy : public RefCounted {
-    GDCLASS(pkpy, RefCounted);
+class pkpy : public Object {
+    GDCLASS(pkpy, Object);
 protected:
     static void _bind_methods();
 public:
