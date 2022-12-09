@@ -3255,7 +3255,7 @@ struct Parser {
         int count = 0;
         while (true) {
             switch (peekChar()) {
-                case ' ': count++; break;
+                case ' ' : count+=1; break;
                 case '\t': count+=4; break;
                 default: return count;
             }
@@ -3266,6 +3266,8 @@ struct Parser {
     bool eatIndentation(){
         if(brackets_level_0 > 0 || brackets_level_1 > 0 || brackets_level_2 > 0) return true;
         int spaces = eatSpaces();
+        if(peekChar() == '#') skipLineComment();
+        if(peekChar() == '\0' || peekChar() == '\n') return true;
         // https://docs.python.org/3/reference/lexical_analysis.html#indentation
         if(spaces > indents.top()){
             indents.push(spaces);
@@ -5236,7 +5238,7 @@ public:
         parser->previous = parser->current;
         parser->current = parser->nextToken();
 
-        //_Str _info = parser->current.info(); printf("%s\n", (const char*)_info);
+        //_Str _info = parser->current.info(); std::cout << _info << '[' << parser->current_line << ']' << std::endl;
 
         while (parser->peekChar() != '\0') {
             parser->token_start = parser->current_char;
@@ -5311,7 +5313,7 @@ public:
                 case '\r': break;       // just ignore '\r'
                 case ' ': case '\t': parser->eatSpaces(); break;
                 case '\n': {
-                    parser->setNextToken(TK("@eol")); while(parser->matchChar('\n'));
+                    parser->setNextToken(TK("@eol"));
                     if(!parser->eatIndentation()) indentationError("unindent does not match any outer indentation level");
                     return;
                 }
@@ -5324,7 +5326,7 @@ public:
                         eatNumber();
                     } else if (parser->isNameStart(c)) {
                         int ret = parser->eatName();
-                        if(ret!=0) syntaxError("identifier is illegal, err " + std::to_string(ret));
+                        if(ret!=0) syntaxError("@id is illegal, err " + std::to_string(ret));
                     } else {
                         syntaxError("unknown character: " + std::string(1, c));
                     }
@@ -6088,7 +6090,7 @@ __LISTCOMP:
 
     /***** Error Reporter *****/
     _Str getLineSnapshot(){
-        int lineno = parser->current_line;
+        int lineno = parser->current.line;
         if(parser->peekChar() == '\n') lineno--;
         return parser->src->snapshot(lineno);
     }
