@@ -5427,7 +5427,7 @@ public:
         _Func func = pkpy::make_shared<Function>();
         func->name = "<lambda>";
         if(!match(TK(":"))){
-            __compileFunctionArgs(func);
+            __compileFunctionArgs(func, false);
             consume(TK(":"));
         }
         func->code = pkpy::make_shared<CodeObject>(parser->src, func->name);
@@ -5962,7 +5962,7 @@ __LISTCOMP:
         emitCode(OP_BUILD_CLASS, clsNameIdx);
     }
 
-    void __compileFunctionArgs(_Func func){
+    void __compileFunctionArgs(_Func func, bool enableTypeHints){
         int state = 0;      // 0 for args, 1 for *args, 2 for k=v, 3 for **kwargs
         do {
             if(state == 3) syntaxError("**kwargs should be the last argument");
@@ -5978,6 +5978,9 @@ __LISTCOMP:
             consume(TK("@id"));
             const _Str& name = parser->previous.str();
             if(func->hasName(name)) syntaxError("duplicate argument name");
+
+            // eat type hints
+            if(enableTypeHints && match(TK(":"))) consume(TK("@id"));
 
             if(state == 0 && peek() == TK("=")) state = 2;
 
@@ -6009,9 +6012,12 @@ __LISTCOMP:
         func->name = parser->previous.str();
 
         if (match(TK("(")) && !match(TK(")"))) {
-            __compileFunctionArgs(func);
+            __compileFunctionArgs(func, true);
             consume(TK(")"));
         }
+
+        // eat type hints
+        if(match(TK("->"))) consume(TK("@id"));
 
         func->code = pkpy::make_shared<CodeObject>(parser->src, func->name);
         this->codes.push(func->code);
