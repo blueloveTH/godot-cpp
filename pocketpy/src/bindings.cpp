@@ -13,8 +13,12 @@ std::intptr_t pkpy::_new_repl(std::intptr_t vm){
     return reinterpret_cast<std::intptr_t>(ret);
 }
 
-int pkpy::_repl_input(std::intptr_t r, String line){
-    int ret = pkpy_repl_input(reinterpret_cast<REPL*>(r), line.utf8().get_data());
+void pkpy::_repl_input(std::intptr_t r, String line){
+    pkpy_repl_input(reinterpret_cast<REPL*>(r), line.utf8().get_data());
+}
+
+int pkpy::_repl_last_input_result(std::intptr_t r){
+    int ret = pkpy_repl_last_input_result(reinterpret_cast<REPL*>(r));
     return ret;
 }
 
@@ -93,6 +97,7 @@ void pkpy::_bind_methods(){
     ClassDB::bind_static_method("pkpy", D_METHOD("delete", "p"), &pkpy::_delete);
     ClassDB::bind_static_method("pkpy", D_METHOD("new_repl", "vm"), &pkpy::_new_repl);
     ClassDB::bind_static_method("pkpy", D_METHOD("repl_input", "r", "line"), &pkpy::_repl_input);
+    ClassDB::bind_static_method("pkpy", D_METHOD("repl_last_input_result", "r"), &pkpy::_repl_last_input_result);
     ClassDB::bind_static_method("pkpy", D_METHOD("new_tvm", "use_stdio"), &pkpy::_new_tvm);
     ClassDB::bind_static_method("pkpy", D_METHOD("tvm_exec_async", "vm", "source"), &pkpy::_tvm_exec_async);
     ClassDB::bind_static_method("pkpy", D_METHOD("tvm_get_state", "vm"), &pkpy::_tvm_get_state);

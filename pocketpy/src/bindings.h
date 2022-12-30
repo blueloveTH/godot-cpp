@@ -16,7 +16,8 @@ public:
 
     static void _delete(std::intptr_t p);
     static std::intptr_t _new_repl(std::intptr_t vm);
-    static int _repl_input(std::intptr_t r, String line);
+    static void _repl_input(std::intptr_t r, String line);
+    static int _repl_last_input_result(std::intptr_t r);
     static std::intptr_t _new_tvm(bool use_stdio);
     static void _tvm_exec_async(std::intptr_t vm, String source);
     static int _tvm_get_state(std::intptr_t vm);
