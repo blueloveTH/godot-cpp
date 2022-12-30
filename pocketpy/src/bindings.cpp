@@ -23,9 +23,8 @@ std::intptr_t pkpy::_new_tvm(bool use_stdio){
     return reinterpret_cast<std::intptr_t>(ret);
 }
 
-bool pkpy::_tvm_exec_async(std::intptr_t vm, String source){
-    bool ret = pkpy_tvm_exec_async(reinterpret_cast<VM*>(vm), source.utf8().get_data());
-    return ret;
+void pkpy::_tvm_exec_async(std::intptr_t vm, String source){
+    pkpy_tvm_exec_async(reinterpret_cast<VM*>(vm), source.utf8().get_data());
 }
 
 int pkpy::_tvm_get_state(std::intptr_t vm){
@@ -58,9 +57,8 @@ std::intptr_t pkpy::_new_vm(bool use_stdio){
     return reinterpret_cast<std::intptr_t>(ret);
 }
 
-bool pkpy::_vm_add_module(std::intptr_t vm, String name, String source){
-    bool ret = pkpy_vm_add_module(reinterpret_cast<VM*>(vm), name.utf8().get_data(), source.utf8().get_data());
-    return ret;
+void pkpy::_vm_add_module(std::intptr_t vm, String name, String source){
+    pkpy_vm_add_module(reinterpret_cast<VM*>(vm), name.utf8().get_data(), source.utf8().get_data());
 }
 
 Variant pkpy::_vm_eval(std::intptr_t vm, String source){
@@ -71,9 +69,8 @@ Variant pkpy::_vm_eval(std::intptr_t vm, String source){
     return s;
 }
 
-bool pkpy::_vm_exec(std::intptr_t vm, String source){
-    bool ret = pkpy_vm_exec(reinterpret_cast<VM*>(vm), source.utf8().get_data());
-    return ret;
+void pkpy::_vm_exec(std::intptr_t vm, String source){
+    pkpy_vm_exec(reinterpret_cast<VM*>(vm), source.utf8().get_data());
 }
 
 Variant pkpy::_vm_get_global(std::intptr_t vm, String name){
