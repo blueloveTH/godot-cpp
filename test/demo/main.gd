@@ -28,8 +28,12 @@ func _ready():
 	($Example as Example).simple_const_func() # Force use of ptrcall
 	prints("  returned", $Example.return_something("some string"))
 	prints("  returned const", $Example.return_something_const())
-	prints("  returned ref", $Example.return_extended_ref())
+	var null_ref = $Example.return_empty_ref()
+	prints("  returned empty ref", null_ref)
+	var ret_ref = $Example.return_extended_ref()
+	prints("  returned ref", ret_ref.get_instance_id(), ", id:", ret_ref.get_id())
 	prints("  returned ", $Example.get_v4())
+	prints("  test node argument", $Example.test_node_argument($Example))
 
 	prints("VarArg method calls")
 	var ref = ExampleRef.new()
@@ -50,12 +54,21 @@ func _ready():
 	var array: Array[int] = [1, 2, 3]
 	$Example.test_tarray_arg(array)
 
+	prints("String += operator")
+	prints("  test string +=", $Example.test_string_ops())
+
+	prints("WorkerThreadPool")
+	prints("  test worker_thread_pool", $Example.test_workpool_ops())
+
+	prints("PackedArray iterators")
+	prints("  test packed array iterators", $Example.test_vector_ops())
+
 	prints("Properties")
 	prints("  custom position is", $Example.group_subgroup_custom_position)
 	$Example.group_subgroup_custom_position = Vector2(50, 50)
 	prints("  custom position now is", $Example.group_subgroup_custom_position)
 
-	prints("Constnts")
+	prints("Constants")
 	prints("  FIRST", $Example.FIRST)
 	prints("  ANSWER_TO_EVERYTHING", $Example.ANSWER_TO_EVERYTHING)
 	prints("  CONSTANT_WITHOUT_ENUM", $Example.CONSTANT_WITHOUT_ENUM)

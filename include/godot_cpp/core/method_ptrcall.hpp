@@ -1,32 +1,32 @@
-/*************************************************************************/
-/*  method_ptrcall.hpp                                                   */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2022 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2022 Godot Engine contributors (cf. AUTHORS.md).   */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+/**************************************************************************/
+/*  method_ptrcall.hpp                                                    */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
 #ifndef GODOT_METHOD_PTRCALL_HPP
 #define GODOT_METHOD_PTRCALL_HPP
@@ -168,7 +168,7 @@ MAKE_PTRARG_BY_REFERENCE(Variant);
 template <class T>
 struct PtrToArg<T *> {
 	_FORCE_INLINE_ static T *convert(const void *p_ptr) {
-		return reinterpret_cast<T *>(godot::internal::gdn_interface->object_get_instance_binding(*reinterpret_cast<GDNativeConstObjectPtr *>(const_cast<void *>(p_ptr)), godot::internal::token, &T::___binding_callbacks));
+		return reinterpret_cast<T *>(godot::internal::gde_interface->object_get_instance_binding(*reinterpret_cast<GDExtensionObjectPtr *>(const_cast<void *>(p_ptr)), godot::internal::token, &T::___binding_callbacks));
 	}
 	typedef Object *EncodeT;
 	_FORCE_INLINE_ static void encode(T *p_var, void *p_ptr) {
@@ -179,7 +179,7 @@ struct PtrToArg<T *> {
 template <class T>
 struct PtrToArg<const T *> {
 	_FORCE_INLINE_ static const T *convert(const void *p_ptr) {
-		return reinterpret_cast<const T *>(godot::internal::gdn_interface->object_get_instance_binding(*reinterpret_cast<GDNativeConstObjectPtr *>(const_cast<void *>(p_ptr)), godot::internal::token, &T::___binding_callbacks));
+		return reinterpret_cast<const T *>(godot::internal::gde_interface->object_get_instance_binding(*reinterpret_cast<GDExtensionObjectPtr *>(const_cast<void *>(p_ptr)), godot::internal::token, &T::___binding_callbacks));
 	}
 	typedef const Object *EncodeT;
 	_FORCE_INLINE_ static void encode(T *p_var, void *p_ptr) {

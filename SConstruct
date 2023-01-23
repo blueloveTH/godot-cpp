@@ -5,6 +5,7 @@ import platform
 import sys
 import subprocess
 from binding_generator import scons_generate_bindings, scons_emit_files
+from SCons.Errors import UserError
 
 EnsureSConsVersion(4, 0)
 
@@ -13,6 +14,28 @@ def add_sources(sources, dir, extension):
     for f in os.listdir(dir):
         if f.endswith("." + extension):
             sources.append(dir + "/" + f)
+
+
+def normalize_path(val):
+    return val if os.path.isabs(val) else os.path.join(env.Dir("#").abspath, val)
+
+
+def validate_api_file(key, val, env):
+    if not os.path.isfile(normalize_path(val)):
+        raise UserError("GDExtension API file ('%s') does not exist: %s" % (key, val))
+
+
+def validate_gdextension_dir(key, val, env):
+    if not os.path.isdir(normalize_path(val)):
+        raise UserError("GDExtension directory ('%s') does not exist: %s" % (key, val))
+
+
+def get_gdextension_dir(env):
+    return normalize_path(env.get("gdextension_dir", env.Dir("gdextension").abspath))
+
+
+def get_api_file(env):
+    return normalize_path(env.get("custom_api_file", os.path.join(get_gdextension_dir(env), "extension_api.json")))
 
 
 # Try to detect the host platform automatically.
@@ -28,7 +51,9 @@ elif ARGUMENTS.get("platform", ""):
 else:
     raise ValueError("Could not detect platform automatically, please specify with platform=<platform>")
 
-env = Environment(tools=["default"])
+# Default tools with no platform defaults to gnu toolchain.
+# We apply platform specific toolchains via our custom tools.
+env = Environment(tools=["default"], PLATFORM="")
 
 # Default num_jobs to local cpu count if not user specified.
 # SCons has a peculiarity where user-specified options won't be overridden
@@ -77,17 +102,27 @@ opts.Add(
 )
 opts.Add(
     PathVariable(
-        "headers_dir", "Path to the directory containing Godot headers", "godot-headers", PathVariable.PathIsDir
+        "gdextension_dir",
+        "Path to a custom directory containing GDExtension interface header and API JSON file",
+        None,
+        validate_gdextension_dir,
     )
 )
-opts.Add(PathVariable("custom_api_file", "Path to a custom JSON API file", None, PathVariable.PathIsFile))
+opts.Add(
+    PathVariable(
+        "custom_api_file",
+        "Path to a custom GDExtension API JSON file (takes precedence over `gdextension_dir`)",
+        None,
+        validate_api_file,
+    )
+)
 opts.Add(
     BoolVariable("generate_bindings", "Force GDExtension API bindings generation. Auto-detected by default.", False)
 )
 opts.Add(BoolVariable("generate_template_get_node", "Generate a template version of the Node class's get_node.", True))
 
 opts.Add(BoolVariable("build_library", "Build the godot-cpp library.", True))
-opts.Add(EnumVariable("float", "Floating-point precision", "32", ("32", "64")))
+opts.Add(EnumVariable("precision", "Set the floating-point precision level", "single", ("single", "double")))
 
 # Add platform options
 tools = {}
@@ -169,21 +204,15 @@ if env.get("is_msvc", False):
 else:
     env.Append(CXXFLAGS=["-std=c++17"])
 
-if env["float"] == "64":
+if env["precision"] == "double":
     env.Append(CPPDEFINES=["REAL_T_IS_DOUBLE"])
 
 # Generate bindings
 env.Append(BUILDERS={"GenerateBindings": Builder(action=scons_generate_bindings, emitter=scons_emit_files)})
-json_api_file = ""
-
-if "custom_api_file" in env:
-    json_api_file = env["custom_api_file"]
-else:
-    json_api_file = os.path.join(os.getcwd(), env["headers_dir"], "extension_api.json")
 
 bindings = env.GenerateBindings(
     env.Dir("."),
-    [json_api_file, os.path.join(env["headers_dir"], "godot", "gdnative_interface.h"), "binding_generator.py"],
+    [get_api_file(env), os.path.join(get_gdextension_dir(env), "gdextension_interface.h"), "binding_generator.py"],
 )
 
 scons_cache_path = os.environ.get("SCONS_CACHE")
@@ -197,7 +226,7 @@ if env["generate_bindings"]:
     NoCache(bindings)
 
 # Includes
-env.Append(CPPPATH=[[env.Dir(d) for d in [env["headers_dir"], "include", os.path.join("gen", "include")]]])
+env.Append(CPPPATH=[[env.Dir(d) for d in [get_gdextension_dir(env), "include", os.path.join("gen", "include")]]])
 
 # Sources to compile
 sources = []
@@ -210,7 +239,7 @@ sources.extend([f for f in bindings if str(f).endswith(".cpp")])
 suffix = ".{}.{}".format(env["platform"], env["target"])
 if env.dev_build:
     suffix += ".dev"
-if env["float"] == "64":
+if env["precision"] == "double":
     suffix += ".double"
 suffix += "." + env["arch"]
 if env["ios_simulator"]:

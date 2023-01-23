@@ -1,5 +1,14 @@
 # godot-cpp
 
+> **Warning**
+>
+> This repository's `master` branch is only usable with Godot 4.0 ([GDExtension](https://godotengine.org/article/introducing-gd-extensions)).
+>
+> Switch to the [`3.5` branch](https://github.com/godotengine/godot-cpp/tree/3.5)
+> if using Godot 3.5.x with GDNative,
+> or the [`3.x` branch](https://github.com/godotengine/godot-cpp/tree/3.x)
+> if using the Godot 3.x development branch with GDNative.
+
 This repository contains the  *C++ bindings* for the [**Godot Engine**](https://github.com/godotengine/godot)'s GDExtensions API.
 
 - [**Versioning**](#versioning)
@@ -24,10 +33,9 @@ Stable releases are also tagged on this repository:
 this repository as a Git submodule, checking out the specific tag matching your
 Godot version.**
 
-> As the `master` and `3.x` branches are constantly getting updates, if you are
+> As the `master` branch of Godot is constantly getting updated, if you are
 > using `godot-cpp` against a more current version of Godot, see the instructions
-> in [**godot-headers**](https://github.com/godotengine/godot-headers) for
-> updating the relevant files.
+> in the `gdextension` folder to update the relevant files.
 
 ## Contributing
 
@@ -76,7 +84,7 @@ extern "C" {
 
 // Initialization.
 
-GDNativeBool GDN_EXPORT example_library_init(const GDNativeInterface *p_interface, GDNativeExtensionClassLibraryPtr p_library, GDNativeInitialization *r_initialization) {
+GDExtensionBool GDE_EXPORT example_library_init(const GDExtensionInterface *p_interface, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
 	godot::GDExtensionBinding::InitObject init_obj(p_interface, p_library, r_initialization);
 
 	init_obj.register_initializer(initialize_example_module);

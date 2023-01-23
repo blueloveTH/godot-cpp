@@ -29,7 +29,7 @@ jobs:
             platform: linux
             artifact-name: godot-cpp-linux-glibc2.27-x86_64-double-release
             artifact-path: bin/libgodot-cpp.linux.template_release.double.x86_64.a
-            flags: float=64
+            flags: precision=double
             cache-name: linux-x86_64-f64
 
           - name: 🏁 Windows (x86_64, MSVC)
@@ -105,6 +105,11 @@ jobs:
         if: ${{ matrix.platform == 'windows' && matrix.flags == 'use_mingw=yes' }}
         uses: egor-tensin/setup-mingw@v2
 
+      - name: Generate godot-cpp sources only
+        run: |
+          scons platform=${{ matrix.platform }} build_library=no ${{ matrix.flags }}
+          scons -c
+
       - name: Build godot-cpp (debug)
         run: |
           scons platform=${{ matrix.platform }} target=template_debug ${{ matrix.flags }}
@@ -145,7 +150,7 @@ jobs:
           cmake -DCMAKE_BUILD_TYPE=Release .
           make -j $(nproc) VERBOSE=1
 
-      - name: Build test GDNative library
+      - name: Build test GDExtension library
         run: |
           cd test && cmake -DCMAKE_BUILD_TYPE=Release -DGODOT_HEADERS_PATH="../godot-headers" -DCPP_BINDINGS_PATH=".." .
           make -j $(nproc) VERBOSE=1
@@ -169,7 +174,7 @@ jobs:
           cmake -DCMAKE_BUILD_TYPE=Release -GNinja .
           cmake --build . -j $(nproc) --verbose
 
-      - name: Build test GDNative library
+      - name: Build test GDExtension library
         run: |
           cd test && cmake -DCMAKE_BUILD_TYPE=Release -DGODOT_HEADERS_PATH="../godot-headers" -DCPP_BINDINGS_PATH=".." -GNinja .
           cmake --build . -j $(nproc) --verbose
@@ -188,7 +193,7 @@ jobs:
           cmake -DCMAKE_BUILD_TYPE=Release -G"Visual Studio 16 2019" .
           cmake --build . --verbose
 
-      - name: Build test GDNative library
+      - name: Build test GDExtension library
         run: |
           cd test && cmake -DCMAKE_BUILD_TYPE=Release -DGODOT_HEADERS_PATH="../godot-headers" -DCPP_BINDINGS_PATH=".." -G"Visual Studio 16 2019" .
           cmake --build . --verbose
