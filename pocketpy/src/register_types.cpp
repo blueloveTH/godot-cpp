@@ -20,7 +20,7 @@ void initialize_pocketpy_module(ModuleInitializationLevel p_level) {
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}
-	ClassDB::register_abstract_class<godot::pkpy>();
+	ClassDB::register_class<godot::pkpy>();
 }
 
 void uninitialize_pocketpy_module(ModuleInitializationLevel p_level) {
