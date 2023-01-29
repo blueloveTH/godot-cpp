@@ -16,15 +16,7 @@ public:
 
     static void _delete(std::intptr_t p);
     static std::intptr_t _new_repl(std::intptr_t vm);
-    static void _repl_input(std::intptr_t r, String line);
-    static int _repl_last_input_result(std::intptr_t r);
-    static std::intptr_t _new_tvm(bool use_stdio);
-    static void _tvm_exec_async(std::intptr_t vm, String source);
-    static int _tvm_get_state(std::intptr_t vm);
-    static Variant _tvm_read_jsonrpc_request(std::intptr_t vm);
-    static void _tvm_reset_state(std::intptr_t vm);
-    static void _tvm_terminate(std::intptr_t vm);
-    static void _tvm_write_jsonrpc_response(std::intptr_t vm, String value);
+    static int _repl_input(std::intptr_t r, String line);
     static std::intptr_t _new_vm(bool use_stdio);
     static void _vm_add_module(std::intptr_t vm, String name, String source);
     static Variant _vm_eval(std::intptr_t vm, String source);
