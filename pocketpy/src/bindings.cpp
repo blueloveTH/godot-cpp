@@ -13,8 +13,8 @@ std::intptr_t pkpy::_new_repl(std::intptr_t vm){
     return reinterpret_cast<std::intptr_t>(ret);
 }
 
-int pkpy::_repl_input(std::intptr_t r, String line){
-    int ret = pkpy_repl_input(reinterpret_cast<REPL*>(r), line.utf8().get_data());
+bool pkpy::_repl_input(std::intptr_t r, String line){
+    bool ret = pkpy_repl_input(reinterpret_cast<REPL*>(r), line.utf8().get_data());
     return ret;
 }
 

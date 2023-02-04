@@ -16,7 +16,7 @@ public:
 
     static void _delete(std::intptr_t p);
     static std::intptr_t _new_repl(std::intptr_t vm);
-    static int _repl_input(std::intptr_t r, String line);
+    static bool _repl_input(std::intptr_t r, String line);
     static std::intptr_t _new_vm(bool use_stdio);
     static void _vm_add_module(std::intptr_t vm, String name, String source);
     static void _vm_bind_None__(std::intptr_t vm, String mod, String name, __f_None__ f);
