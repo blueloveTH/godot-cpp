@@ -92,23 +92,9 @@ struct Comparator {
 	_ALWAYS_INLINE_ bool operator()(const T &p_a, const T &p_b) const { return (p_a < p_b); }
 };
 
-class DefaultAllocator {
-public:
-	_ALWAYS_INLINE_ static void *alloc(size_t p_memory) { return Memory::alloc_static(p_memory); }
-	_ALWAYS_INLINE_ static void free(void *p_ptr) { Memory::free_static(p_ptr); }
-};
-
-template <class T>
-class DefaultTypedAllocator {
-public:
-	template <class... Args>
-	_ALWAYS_INLINE_ T *new_allocation(const Args &&...p_args) { return memnew(T(p_args...)); }
-	_ALWAYS_INLINE_ void delete_allocation(T *p_allocation) { memdelete(p_allocation); }
-};
-
 template <class T>
 void memdelete(T *p_class, typename std::enable_if<!std::is_base_of_v<godot::Wrapped, T>>::type * = nullptr) {
-	if (!__has_trivial_destructor(T)) {
+	if (!std::is_trivially_destructible<T>::value) {
 		p_class->~T();
 	}
 
@@ -122,12 +108,26 @@ void memdelete(T *p_class) {
 
 template <class T, class A>
 void memdelete_allocator(T *p_class) {
-	if (!__has_trivial_destructor(T)) {
+	if (!std::is_trivially_destructible<T>::value) {
 		p_class->~T();
 	}
 
 	A::free(p_class);
 }
+
+class DefaultAllocator {
+public:
+	_ALWAYS_INLINE_ static void *alloc(size_t p_memory) { return Memory::alloc_static(p_memory); }
+	_ALWAYS_INLINE_ static void free(void *p_ptr) { Memory::free_static(p_ptr); }
+};
+
+template <class T>
+class DefaultTypedAllocator {
+public:
+	template <class... Args>
+	_ALWAYS_INLINE_ T *new_allocation(const Args &&...p_args) { return memnew(T(p_args...)); }
+	_ALWAYS_INLINE_ void delete_allocation(T *p_allocation) { memdelete(p_allocation); }
+};
 
 #define memnew_arr(m_class, m_count) memnew_arr_template<m_class>(m_count)
 
@@ -145,7 +145,7 @@ T *memnew_arr_template(size_t p_elements, const char *p_descr = "") {
 	ERR_FAIL_COND_V(!mem, failptr);
 	*(mem - 1) = p_elements;
 
-	if (!__has_trivial_constructor(T)) {
+	if (!std::is_trivially_destructible<T>::value) {
 		T *elems = (T *)mem;
 
 		/* call operator new */
@@ -161,7 +161,7 @@ template <typename T>
 void memdelete_arr(T *p_class) {
 	uint64_t *ptr = (uint64_t *)p_class;
 
-	if (!__has_trivial_destructor(T)) {
+	if (!std::is_trivially_destructible<T>::value) {
 		uint64_t elem_count = *(ptr - 1);
 
 		for (uint64_t i = 0; i < elem_count; i++) {
