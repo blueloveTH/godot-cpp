@@ -6763,7 +6763,7 @@ extern "C" {
                     char* p = f_str(packet);
                     if(p == nullptr) return vm->None;
                     PyVar ret = vm->PyStr(p);
-                    free(p);
+                    // free(p);
                     return ret;
                 }
                 case 'N': f_None(packet); return vm->None;
