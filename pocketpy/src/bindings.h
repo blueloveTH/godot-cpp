@@ -15,6 +15,7 @@ protected:
 public:
 
     static void _delete(std::intptr_t p);
+    static void _setup_callbacks(f_int_t f_int, f_float_t f_float, f_bool_t f_bool, f_str_t f_str, f_None_t f_None);
     static std::intptr_t _new_repl(std::intptr_t vm);
     static bool _repl_input(std::intptr_t r, String line);
     static std::intptr_t _new_vm(bool use_stdio);
