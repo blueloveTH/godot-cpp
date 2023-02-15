@@ -3603,6 +3603,8 @@ struct CodeObject {
     /************************************************/
 };
 
+
+
 static THREAD_LOCAL i64 kFrameGlobalId = 0;
 
 struct Frame {
@@ -3709,23 +3711,21 @@ struct Frame {
         return true;
     }
 
+    int _exit_block(int i){
+        if(co->blocks[i].type == FOR_LOOP) pop();
+        else if(co->blocks[i].type == TRY_EXCEPT) on_try_block_exit();
+        return co->blocks[i].parent;
+    }
+
     void jump_abs_safe(int target){
         const Bytecode& prev = co->codes[_ip];
         int i = prev.block;
         _next_ip = target;
         if(_next_ip >= co->codes.size()){
-            while(i>=0){
-                if(co->blocks[i].type == FOR_LOOP) pop();
-                else if(co->blocks[i].type == TRY_EXCEPT) on_try_block_exit();
-                i = co->blocks[i].parent;
-            }
+            while(i>=0) i = _exit_block(i);
         }else{
             const Bytecode& next = co->codes[target];
-            while(i>=0 && i!=next.block){
-                if(co->blocks[i].type == FOR_LOOP) pop();
-                else if(co->blocks[i].type == TRY_EXCEPT) on_try_block_exit();
-                i = co->blocks[i].parent;
-            }
+            while(i>=0 && i!=next.block) i = _exit_block(i);
             if(i!=next.block) throw std::runtime_error("invalid jump");
         }
     }
