@@ -1,0 +1,88 @@
+[gd_scene load_steps=2 format=3 uid="uid://cxi31fqehtc12"]
+
+[sub_resource type="GDScript" id="GDScript_d4kr3"]
+script/source = "@tool
+extends VBoxContainer
+
+var vm;
+var repl;
+var need_more_lines;
+
+var last_text;
+
+func _enter_tree():
+	$TextBox.clear()
+	self.need_more_lines = false
+	self.vm = pkpy.new_vm(false)
+	self.repl = pkpy.new_repl(vm)
+	refresh()
+
+func refresh():
+	var ret = pkpy.vm_read_output(vm)
+	ret = JSON.parse_string(ret)
+	$TextBox.text += ret['stdout']
+	$TextBox.text += ret['stderr']
+	$TextBox.set_caret_line($TextBox.get_line_count())
+	if need_more_lines:
+		$TextBox.insert_text_at_caret(\"... \")
+	else:
+		$TextBox.insert_text_at_caret(\">>> \")
+	last_text = $TextBox.text
+
+
+func _on_text_box_text_changed():
+	var curr_text = $TextBox.text
+	if curr_text.substr(0, len(last_text)) != last_text:
+		$TextBox.text = last_text
+		$TextBox.set_caret_line($TextBox.get_line_count())
+		$TextBox.set_caret_column(4)
+		return
+	var cmd: String = $TextBox.text.substr(len(last_text))
+	if \"\\n\" not in cmd:
+		return
+	var parts = cmd.split(\"\\n\")
+	if parts[len(parts)-1].is_empty():
+		parts.remove_at(len(parts)-1)
+	for p in parts:
+		need_more_lines = pkpy.repl_input(repl, p)
+		refresh()
+
+func _on_restart_button_pressed():
+	_exit_tree()
+	_enter_tree()
+
+func _exit_tree():
+	pkpy.delete(self.repl)
+	pkpy.delete(self.vm)
+"
+
+[node name="Python REPL" type="VBoxContainer"]
+script = SubResource("GDScript_d4kr3")
+
+[node name="HeaderContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="HeaderContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Python REPL:"
+
+[node name="RestartButton" type="Button" parent="HeaderContainer"]
+layout_mode = 2
+text = "Restart"
+
+[node name="TextBox" type="TextEdit" parent="."]
+custom_minimum_size = Vector2(0, 300)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+context_menu_enabled = false
+shortcut_keys_enabled = false
+selecting_enabled = false
+drag_and_drop_selection_enabled = false
+draw_tabs = true
+caret_blink = true
+caret_multiple = false
+
+[connection signal="pressed" from="HeaderContainer/RestartButton" to="." method="_on_restart_button_pressed"]
+[connection signal="text_changed" from="TextBox" to="." method="_on_text_box_text_changed"]

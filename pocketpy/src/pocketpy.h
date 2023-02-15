@@ -1808,6 +1808,7 @@ private:
 #include <regex>
 #include <stack>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 #include <string>
@@ -1819,21 +1820,34 @@ private:
 #include <memory>
 #include <functional>
 #include <iostream>
+// #include <filesystem>
+// namespace fs = std::filesystem;
 
 #ifdef POCKETPY_H
-#define UNREACHABLE() throw std::runtime_error( "L" + std::to_string(__LINE__) + " UNREACHABLE()! This should be a bug, please report it");
+#define UNREACHABLE() throw std::runtime_error( "L" + std::to_string(__LINE__) + " UNREACHABLE()!");
 #else
 #define UNREACHABLE() throw std::runtime_error( __FILE__ + std::string(":") + std::to_string(__LINE__) + " UNREACHABLE()!");
 #endif
 
-#define PK_VERSION "0.8.4"
+#define PK_VERSION "0.8.7"
 
 typedef int64_t i64;
 typedef double f64;
 
 struct Dummy { char _; };
-
 #define DUMMY_VAL Dummy()
+
+struct Type {
+	int index;
+	Type(): index(-1) {}
+	Type(int index): index(index) {}
+	inline bool operator==(Type other) const noexcept {
+		return this->index == other.index;
+	}
+	inline bool operator!=(Type other) const noexcept {
+		return this->index != other.index;
+	}
+};
 
 template<typename T>
 void* tid() {
@@ -1841,11 +1855,21 @@ void* tid() {
 	return (void*)(&_x);
 }
 
+//#define THREAD_LOCAL thread_local
+#define THREAD_LOCAL
+
+#define RAW(T) std::remove_const_t<std::remove_reference_t<T>>
+
 
 namespace pkpy{
     template<typename T>
-    struct sp_deleter {
-        inline static void call(int* counter){
+    struct SpAllocator {
+        template<typename U>
+        inline static int* alloc(){
+            return (int*)malloc(sizeof(int) + sizeof(U));
+        }
+
+        inline static void dealloc(int* counter){
             ((T*)(counter + 1))->~T();
             free(counter);
         }
@@ -1857,7 +1881,7 @@ namespace pkpy{
 
 #define _t() ((T*)(counter + 1))
 #define _inc_counter() if(counter) ++(*counter)
-#define _dec_counter() if(counter && --(*counter) == 0){ pkpy::sp_deleter<T>::call(counter); }
+#define _dec_counter() if(counter && --(*counter) == 0){ SpAllocator<T>::dealloc(counter); }
 
     public:
         shared_ptr() {}
@@ -1919,23 +1943,21 @@ namespace pkpy{
     shared_ptr<T> make_shared(Args&&... args) {
         static_assert(std::is_base_of_v<T, U>, "U must be derived from T");
         static_assert(std::has_virtual_destructor_v<T>, "T must have virtual destructor");
-        int* p = (int*)malloc(sizeof(int) + sizeof(U));
-        *p = 1;
+        int* p = SpAllocator<T>::template alloc<U>(); *p = 1;
         new(p+1) U(std::forward<Args>(args)...);
         return shared_ptr<T>(p);
     }
 
     template <typename T, typename... Args>
     shared_ptr<T> make_shared(Args&&... args) {
-        int* p = (int*)malloc(sizeof(int) + sizeof(T));
-        *p = 1;
+        int* p = SpAllocator<T>::template alloc<T>(); *p = 1;
         new(p+1) T(std::forward<Args>(args)...);
         return shared_ptr<T>(p);
     }
 };
 
 
-typedef std::stringstream _StrStream;
+typedef std::stringstream StrStream;
 
 class Str : public std::string {
     mutable std::vector<uint16_t>* _u8_index = nullptr;
@@ -1946,11 +1968,10 @@ class Str : public std::string {
         if(_u8_index != nullptr) return;
         _u8_index = new std::vector<uint16_t>();
         _u8_index->reserve(size());
-        if(size() > 65535) throw std::runtime_error("String has more than 65535 bytes.");
+        if(size() > 65535) throw std::runtime_error("str has more than 65535 bytes.");
         for(uint16_t i = 0; i < size(); i++){
             // https://stackoverflow.com/questions/3911536/utf-8-unicode-whats-with-0xc0-and-0x80
-            if((at(i) & 0xC0) != 0x80)
-                _u8_index->push_back(i);
+            if((at(i) & 0xC0) != 0x80) _u8_index->push_back(i);
         }
     }
 public:
@@ -1968,7 +1989,7 @@ public:
         }
     }
     Str(Str&& s) : std::string(std::move(s)) {
-        if(_u8_index != nullptr) delete _u8_index;
+        delete _u8_index;
         _u8_index = s._u8_index;
         s._u8_index = nullptr;
         if(s.hash_initialized){
@@ -2018,7 +2039,7 @@ public:
     }
 
     Str escape(bool single_quote) const {
-        _StrStream ss;
+        StrStream ss;
         ss << (single_quote ? '\'' : '"');
         for (int i=0; i<length(); i++) {
             char c = this->operator[](i);
@@ -2050,8 +2071,8 @@ public:
 
     Str& operator=(const Str& s){
         this->std::string::operator=(s);
-        if(_u8_index != nullptr){
-            delete _u8_index;
+        delete _u8_index;
+        if(s._u8_index != nullptr){
             _u8_index = new std::vector<uint16_t>(*s._u8_index);
         }
         this->hash_initialized = s.hash_initialized;
@@ -2061,7 +2082,7 @@ public:
 
     Str& operator=(Str&& s){
         this->std::string::operator=(std::move(s));
-        if(_u8_index != nullptr) delete _u8_index;
+        delete _u8_index;
         this->_u8_index = s._u8_index;
         s._u8_index = nullptr;
         this->hash_initialized = s.hash_initialized;
@@ -2069,9 +2090,7 @@ public:
         return *this;
     }
 
-    ~Str(){
-        if(_u8_index != nullptr) delete _u8_index;
-    }
+    ~Str(){ delete _u8_index;}
 };
 
 namespace std {
@@ -2165,7 +2184,7 @@ typedef emhash8::HashMap<Str, PyVar> NameDict;
 
 namespace pkpy {
     const int kMaxPoolSize = 10;
-    static thread_local std::vector<PyVar*>* _args_pool = new std::vector<PyVar*>[kMaxPoolSize];
+    static THREAD_LOCAL std::vector<PyVar*>* _args_pool = new std::vector<PyVar*>[kMaxPoolSize];
 
     class Args {
         PyVar* _args;
@@ -2187,7 +2206,7 @@ namespace pkpy {
             }
         }
 
-        void _free(){
+        void _dealloc(){
             if(_size == 0 || _args == nullptr) return;
             if(_size >= kMaxPoolSize || _args_pool[_size].size() > 32){
                 delete[] _args;
@@ -2228,7 +2247,7 @@ namespace pkpy {
         const PyVar& operator[](int i) const { return _args[i]; }
 
         Args& operator=(Args&& other) noexcept {
-            _free();
+            _dealloc();
             this->_args = other._args;
             this->_size = other._size;
             other._args = nullptr;
@@ -2261,7 +2280,7 @@ namespace pkpy {
             }
         }
 
-        ~Args(){ _free(); }
+        ~Args(){ _dealloc(); }
     };
 
     static const Args _zero(0);
@@ -2318,6 +2337,18 @@ def max(a, b):
 def min(a, b):
     return a < b ? a : b
 
+def all(iterable):
+    for i in iterable:
+        if not i:
+            return False
+    return True
+
+def any(iterable):
+    for i in iterable:
+        if i:
+            return True
+    return False
+
 def sum(iterable):
     res = 0
     for i in iterable:
@@ -2332,18 +2363,13 @@ def zip(a, b):
 
 def reversed(iterable):
     a = list(iterable)
-    return [a[i] for i in range(len(a)-1, -1, -1)]
+    a.reverse()
+    return a
 
-def sorted(iterable, key=None, reverse=False):
-    b = list(iterable)
-    a = (key is None) ? b : [key(i) for i in iterable]
-    for i in range(len(a)):
-        for j in range(i+1, len(a)):
-            if (a[i] > a[j]) ^ reverse:
-                if a is not b:
-                    a[i], a[j] = a[j], a[i]
-                b[i], b[j] = b[j], b[i]
-    return b
+def sorted(iterable, reverse=False):
+    a = list(iterable)
+    a.sort(reverse=reverse)
+    return a
 
 ##### str #####
 
@@ -2393,6 +2419,45 @@ tuple.__repr__ = lambda self: '(' + ', '.join([repr(i) for i in self]) + ')'
 list.__json__ = lambda self: '[' + ', '.join([i.__json__() for i in self]) + ']'
 tuple.__json__ = lambda self: '[' + ', '.join([i.__json__() for i in self]) + ']'
 
+def __qsort(a: list, i: int, j: int):
+    if i>=j:
+        return
+    d1, d2 = i, j
+    mid = (i+j) // 2
+    a[mid], a[i] = a[i], a[mid]
+    u = a[i];
+    while i<j:
+        while i<j and a[j]>u:
+            j -= 1
+        if i<j:
+            a[i] = a[j]
+            i += 1
+        while i<j and a[i]<u:
+            i += 1
+        if i<j:
+            a[j] = a[i]
+            j -= 1
+    a[i] = u;
+    __qsort(a, d1, i-1)
+    __qsort(a, i+1, d2)
+
+def __list4reverse(self):
+    i, j = 0, len(self)-1
+    while i < j:
+        self[i], self[j] = self[j], self[i]
+        i += 1
+        j -= 1
+list.reverse = __list4reverse
+del __list4reverse
+
+def __list4sort(self, reverse=False):
+    __qsort(self, 0, len(self)-1)
+    if reverse:
+        self.reverse()
+
+list.sort = __list4sort
+del __list4sort
+
 def __list4extend(self, other):
     for i in other:
         self.append(i)
@@ -2422,14 +2487,6 @@ def __list4pop(self, i=-1):
     return res
 list.pop = __list4pop
 del __list4pop
-
-def __list4__mul__(self, n):
-    a = []
-    for i in range(n):
-        a.extend(self)
-    return a
-list.__mul__ = __list4__mul__
-del __list4__mul__
 
 def __iterable4__eq__(self, other):
     if len(self) != len(other):
@@ -2519,14 +2576,26 @@ class dict:
             if kv is not None:
                 self[kv[0]] = kv[1]
 
+    def get(self, key, default=None):
+        ok, i = self.__probe(key)
+        if ok:
+            return self._a[i][1]
+        return default
+
     def keys(self):
-        return [kv[0] for kv in self._a if kv is not None]
+        for kv in self._a:
+            if kv is not None:
+                yield kv[0]
 
     def values(self):
-        return [kv[1] for kv in self._a if kv is not None]
+        for kv in self._a:
+            if kv is not None:
+                yield kv[1]
 
     def items(self):
-        return [kv for kv in self._a if kv is not None]
+        for kv in self._a:
+            if kv is not None:
+                yield kv
 
     def clear(self):
         self._a = [None] * self._capacity
@@ -2652,83 +2721,17 @@ class set:
         return '{'+ ', '.join(self._a.keys()) + '}'
     
     def __iter__(self):
-        return self._a.keys().__iter__()
+        return self._a.keys()
 )";
 
 const char* kRandomCode = R"(
-import time as _time
+def shuffle(L):
+    for i in range(len(L)):
+        j = randint(i, len(L) - 1)
+        L[i], L[j] = L[j], L[i]
 
-__all__ = ['Random', 'seed', 'random', 'randint', 'uniform']
-
-def _int32(x):
-	return int(0xffffffff & x)
-
-class Random:
-	def __init__(self, seed=None):
-		if seed is None:
-			seed = int(_time.time() * 1000000)
-		seed = _int32(seed)
-		self.mt = [0] * 624
-		self.mt[0] = seed
-		self.mti = 0
-		for i in range(1, 624):
-			self.mt[i] = _int32(1812433253 * (self.mt[i - 1] ^ self.mt[i - 1] >> 30) + i)
-	
-	def extract_number(self):
-		if self.mti == 0:
-			self.twist()
-		y = self.mt[self.mti]
-		y = y ^ y >> 11
-		y = y ^ y << 7 & 2636928640
-		y = y ^ y << 15 & 4022730752
-		y = y ^ y >> 18
-		self.mti = (self.mti + 1) % 624
-		return _int32(y)
-	
-	def twist(self):
-		for i in range(0, 624):
-			y = _int32((self.mt[i] & 0x80000000) + (self.mt[(i + 1) % 624] & 0x7fffffff))
-			self.mt[i] = (y >> 1) ^ self.mt[(i + 397) % 624]
-			
-			if y % 2 != 0:
-				self.mt[i] = self.mt[i] ^ 0x9908b0df
-				
-	def seed(self, x):
-		assert type(x) is int
-		self.mt = [0] * 624
-		self.mt[0] = _int32(x)
-		self.mti = 0
-		for i in range(1, 624):
-			self.mt[i] = _int32(1812433253 * (self.mt[i - 1] ^ self.mt[i - 1] >> 30) + i)
-			
-	def random(self):
-		return self.extract_number() / 2 ** 32
-		
-	def randint(self, a, b):
-		assert a <= b
-		return int(self.random() * (b - a + 1)) + a
-		
-	def uniform(self, a, b):
-		if a > b:
-			a, b = b, a
-		return self.random() * (b - a) + a
-
-    def shuffle(self, L):
-        for i in range(len(L)):
-            j = self.randint(i, len(L) - 1)
-            L[i], L[j] = L[j], L[i]
-
-    def choice(self, L):
-        return L[self.randint(0, len(L) - 1)]
-		
-_inst = Random()
-seed = _inst.seed
-random = _inst.random
-randint = _inst.randint
-uniform = _inst.uniform
-shuffle = _inst.shuffle
-choice = _inst.choice
-
+def choice(L):
+    return L[randint(0, len(L) - 1)]
 )";
 
 
@@ -2775,7 +2778,7 @@ struct SourceData {
     }
 
     Str snapshot(int lineno, const char* cursor=nullptr){
-        _StrStream ss;
+        StrStream ss;
         ss << "  " << "File \"" << filename << "\", line " << lineno << '\n';
         std::pair<const char*,const char*> pair = get_line(lineno);
         Str line = "<?>";
@@ -2813,14 +2816,16 @@ public:
 
     Str summary() const {
         std::stack<Str> st(stacktrace);
-        _StrStream ss;
+        StrStream ss;
         if(is_re) ss << "Traceback (most recent call last):\n";
         while(!st.empty()) { ss << st.top() << '\n'; st.pop(); }
-        ss << type << ": " << msg;
+        if (!msg.empty()) ss << type << ": " << msg;
+        else ss << type;
         return ss.str();
     }
 };
 }
+
 
 
 struct CodeObject;
@@ -2828,7 +2833,7 @@ struct Frame;
 struct BaseRef;
 class VM;
 
-typedef std::function<PyVar(VM*, const pkpy::Args&)> NativeFuncRaw;
+typedef std::function<PyVar(VM*, pkpy::Args&)> NativeFuncRaw;
 typedef pkpy::shared_ptr<CodeObject> CodeObject_;
 
 namespace pkpy{
@@ -2838,7 +2843,7 @@ struct NativeFunc {
     bool method;
     
     NativeFunc(NativeFuncRaw f, int argc, bool method) : f(f), argc(argc), method(method) {}
-    inline PyVar operator()(VM* vm, const pkpy::Args& args) const;
+    inline PyVar operator()(VM* vm, pkpy::Args& args) const;
 };
 
 struct Function {
@@ -2877,6 +2882,7 @@ struct Slice {
         if(stop < 0) stop += len;
         if(start < 0) start = 0;
         if(stop > len) stop = len;
+        if(stop < start) stop = start;
     }
 };
 
@@ -2889,56 +2895,108 @@ protected:
     PyVar _ref;     // keep a reference to the object so it will not be deleted while iterating
 public:
     virtual PyVar next() = 0;
-    virtual bool has_next() = 0;
     PyVarRef var;
     BaseIter(VM* vm, PyVar _ref) : vm(vm), _ref(_ref) {}
     virtual ~BaseIter() = default;
 };
 
 struct PyObject {
-    PyVar type;
-    pkpy::NameDict attribs;
-    void* _tid;
+    Type type;
+    pkpy::NameDict* _attr;
+    // void* _tid;
+    const int _size;
 
-    inline bool is_type(const PyVar& type) const noexcept{ return this->type == type; }
+    inline bool is_attr_valid() const noexcept { return _attr != nullptr; }
+    inline pkpy::NameDict& attr() noexcept { return *_attr; }
+    inline PyVar& attr(const Str& name) noexcept { return (*_attr)[name]; }
+
+    inline bool is_type(Type type) const noexcept{ return this->type == type; }
     virtual void* value() = 0;
 
-    PyObject(const PyVar& type, void* _tid) : type(type), _tid(_tid) {}
-    virtual ~PyObject() = default;
+    PyObject(Type type, const int size) : type(type), _size(size) {}
+    virtual ~PyObject() { delete _attr; }
 };
 
 template <typename T>
 struct Py_ : PyObject {
     T _value;
 
-    Py_(const PyVar& type, T val) : PyObject(type, tid<T>()), _value(val) {}
+    Py_(Type type, const T& val): PyObject(type, sizeof(Py_<T>)), _value(val) { _init(); }
+    Py_(Type type, T&& val): PyObject(type, sizeof(Py_<T>)), _value(std::move(val)) { _init(); }
+
+    inline void _init() noexcept {
+        if constexpr (std::is_same_v<T, Dummy> || std::is_same_v<T, Type>
+        || std::is_same_v<T, pkpy::Function_> || std::is_same_v<T, pkpy::NativeFunc>) {
+            _attr = new pkpy::NameDict();
+        }else{
+            _attr = nullptr;
+        }
+    }
     void* value() override { return &_value; }
 };
 
 #define OBJ_GET(T, obj) (((Py_<T>*)((obj).get()))->_value)
-#define OBJ_NAME(obj) OBJ_GET(Str, (obj)->attribs[__name__])
-#define OBJ_TP_NAME(obj) OBJ_GET(Str, (obj)->type->attribs[__name__])
+#define OBJ_NAME(obj) OBJ_GET(Str, (obj)->attr(__name__))
 
 #define PY_CLASS(mod, name) \
-    inline static PyVar _type(VM* vm) { return vm->_modules[#mod]->attribs[#name]; } \
+    inline static Type _type(VM* vm) { return OBJ_GET(Type, vm->_modules[#mod]->attr(#name)); } \
     inline static const char* _mod() { return #mod; } \
     inline static const char* _name() { return #name; }
 
-#define PY_BUILTIN_CLASS(name) inline static PyVar _type(VM* vm) { return vm->tp_##name; }
-
-static thread_local emhash8::HashMap<void*, std::vector<int*>> _obj_pool;
 
 namespace pkpy {
+    template<int N>
+    struct MemBlock {
+        std::vector<void*> a;
+        int block_size;
+
+        MemBlock(int block_size) : block_size(block_size) {
+            new_block();
+        }
+
+        void new_block(){
+            int8_t* total = (int8_t*)malloc(N * block_size);
+            for(int i = 0; i < block_size; ++i){
+                a.push_back((void*)(total + i * N));
+            }
+        }
+
+        inline void* alloc(){
+            if(a.empty()) new_block();
+            void* p = a.back();
+            a.pop_back();
+            return p;
+        }
+
+        inline void dealloc(void* p) noexcept{
+            a.push_back(p);
+        }
+
+        ~MemBlock(){
+            free(a[0]);
+        }
+    };
+
+    constexpr int kMemObjSize = sizeof(int) + sizeof(Py_<i64>);
+    static THREAD_LOCAL MemBlock<kMemObjSize> _mem_pool(512);
+
     template<>
-    struct sp_deleter<PyObject> {
-        inline static void call(int* counter) {
+    struct SpAllocator<PyObject> {
+        template<typename U>
+        inline static int* alloc(){
+            if constexpr (sizeof(int) + sizeof(U) == kMemObjSize) {
+                return (int*)_mem_pool.alloc();
+            }
+            return (int*)malloc(sizeof(int) + sizeof(U));
+        }
+
+        inline static void dealloc(int* counter){
             PyObject* obj = (PyObject*)(counter + 1);
-            std::vector<int*>& pool = _obj_pool[obj->_tid];
-            if(obj->_tid==tid<Dummy>() || pool.size() > 60){
-                obj->~PyObject();
-                free(counter);
+            obj->~PyObject();
+            if(obj->_size == kMemObjSize - sizeof(int)){
+                _mem_pool.dealloc(counter);
             }else{
-                pool.push_back(counter);
+                free(counter);
             }
         }
     };
@@ -2955,7 +3013,7 @@ constexpr const char* kTokens[] = {
     "==", "!=", ">=", "<=",
     "+=", "-=", "*=", "/=", "//=", "%=", "&=", "|=", "^=",
     /** KW_BEGIN **/
-    "class", "import", "as", "def", "lambda", "pass", "del", "from", "with",
+    "class", "import", "as", "def", "lambda", "pass", "del", "from", "with", "yield",
     "None", "in", "is", "and", "or", "not", "True", "False", "global", "try", "except", "finally",
     "goto", "label",      // extended keywords, not available in cpython
     "while", "for", "if", "elif", "else", "break", "continue", "return", "assert", "raise",
@@ -2999,7 +3057,7 @@ struct Token{
   const Str str() const { return Str(start, length);}
 
   const Str info() const {
-    _StrStream ss;
+    StrStream ss;
     Str raw = str();
     if (raw == Str("\n")) raw = "\\n";
     ss << line << ": " << TK_STR(type) << " '" << raw << "'";
@@ -3087,7 +3145,7 @@ struct Parser {
         if(brackets_level > 0) return true;
         int spaces = eat_spaces();
         if(peekchar() == '#') skip_line_comment();
-        if(peekchar() == '\0' || peekchar() == '\n') return true;
+        if(peekchar() == '\0' || peekchar() == '\n' || peekchar() == '\r') return true;
         // https://docs.python.org/3/reference/lexical_analysis.html#indentation
         if(spaces > indents.top()){
             indents.push(spaces);
@@ -3355,8 +3413,8 @@ OPCODE(EXCEPTION_MATCH)
 OPCODE(RAISE)
 OPCODE(RE_RAISE)
 
-OPCODE(BUILD_INDEX_REF)
-OPCODE(BUILD_ATTR_REF)
+OPCODE(BUILD_INDEX)
+OPCODE(BUILD_ATTR)
 OPCODE(STORE_NAME)
 OPCODE(STORE_FUNCTION)
 OPCODE(STORE_REF)
@@ -3364,6 +3422,10 @@ OPCODE(DELETE_REF)
 
 OPCODE(TRY_BLOCK_ENTER)
 OPCODE(TRY_BLOCK_EXIT)
+
+OPCODE(YIELD_VALUE)
+//OPCODE(FAST_INDEX_0)      // a[0]
+//OPCODE(FAST_INDEX_1)      // a[i]
 
 #endif
     #undef OPCODE
@@ -3431,8 +3493,8 @@ OPCODE(EXCEPTION_MATCH)
 OPCODE(RAISE)
 OPCODE(RE_RAISE)
 
-OPCODE(BUILD_INDEX_REF)
-OPCODE(BUILD_ATTR_REF)
+OPCODE(BUILD_INDEX)
+OPCODE(BUILD_ATTR)
 OPCODE(STORE_NAME)
 OPCODE(STORE_FUNCTION)
 OPCODE(STORE_REF)
@@ -3440,6 +3502,10 @@ OPCODE(DELETE_REF)
 
 OPCODE(TRY_BLOCK_ENTER)
 OPCODE(TRY_BLOCK_EXIT)
+
+OPCODE(YIELD_VALUE)
+//OPCODE(FAST_INDEX_0)      // a[0]
+//OPCODE(FAST_INDEX_1)      // a[i]
 
 #endif
     #undef OPCODE
@@ -3480,6 +3546,7 @@ struct CodeBlock {
 struct CodeObject {
     pkpy::shared_ptr<SourceData> src;
     Str name;
+    bool is_generator = false;
 
     CodeObject(pkpy::shared_ptr<SourceData> src, Str name) {
         this->src = src;
@@ -3492,6 +3559,8 @@ struct CodeObject {
     emhash8::HashMap<Str, int> global_names;
     std::vector<CodeBlock> blocks = { CodeBlock{NO_BLOCK, -1} };
     emhash8::HashMap<Str, int> labels;
+
+    void optimize(VM* vm);
 
     bool add_label(const Str& label){
         if(labels.contains(label)) return false;
@@ -3514,10 +3583,6 @@ struct CodeObject {
         return consts.size() - 1;
     }
 
-    void optimize(){
-        for(int i=0; i<codes.size(); i++){}
-    }
-
     /************************************************/
     int _curr_block_i = 0;
     bool _rvalue = false;
@@ -3538,7 +3603,7 @@ struct CodeObject {
     /************************************************/
 };
 
-static thread_local i64 kFrameGlobalId = 0;
+static THREAD_LOCAL i64 kFrameGlobalId = 0;
 
 struct Frame {
     std::vector<PyVar> _data;
@@ -3552,7 +3617,7 @@ struct Frame {
     std::stack<std::pair<int, std::vector<PyVar>>> s_try_block;
 
     inline pkpy::NameDict& f_locals() noexcept { return *_locals; }
-    inline pkpy::NameDict& f_globals() noexcept { return _module->attribs; }
+    inline pkpy::NameDict& f_globals() noexcept { return _module->attr(); }
 
     Frame(const CodeObject_ co, PyVar _module, pkpy::shared_ptr<pkpy::NameDict> _locals)
         : co(co), _module(_module), _locals(_locals), id(kFrameGlobalId++) { }
@@ -3567,16 +3632,16 @@ struct Frame {
         return co->src->snapshot(line);
     }
 
-    Str stack_info(){
-        _StrStream ss;
-        ss << "[";
-        for(int i=0; i<_data.size(); i++){
-            ss << OBJ_TP_NAME(_data[i]);
-            if(i != _data.size()-1) ss << ", ";
-        }
-        ss << "]";
-        return ss.str();
-    }
+    // Str stack_info(){
+    //     StrStream ss;
+    //     ss << "[";
+    //     for(int i=0; i<_data.size(); i++){
+    //         ss << OBJ_TP_NAME(_data[i]);
+    //         if(i != _data.size()-1) ss << ", ";
+    //     }
+    //     ss << "]";
+    //     return ss.str();
+    // }
 
     inline bool has_next_bytecode() const {
         return _next_ip < co->codes.size();
@@ -3687,20 +3752,23 @@ struct Frame {
         check_type(obj, ptype);                                 \
         return OBJ_GET(ctype, obj);                             \
     }                                                           \
-    inline PyVar Py##type(ctype value) {                        \
-        return new_object(ptype, value);                        \
-    }
+    inline PyVar Py##type(const ctype& value) { return new_object(ptype, value);} \
+    inline PyVar Py##type(ctype&& value) { return new_object(ptype, std::move(value));}
 
+class Generator;
 
 class VM {
+public:
     std::stack< std::unique_ptr<Frame> > callstack;
     PyVar _py_op_call;
+    PyVar _py_op_yield;
+    // PyVar _ascii_str_pool[128];
 
     PyVar run_frame(Frame* frame){
         while(frame->has_next_bytecode()){
             const Bytecode& byte = frame->next_bytecode();
             // if(true || frame->_module != builtins){
-            //     printf("%d: %s (%d) %s\n", frame->_ip, OP_NAMES[byte.op], byte.arg, frame->stack_info().c_str());
+            //     printf("%d: %s (%d) %s\n",                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 frame->_ip, OP_NAMES[byte.op], byte.arg, frame->stack_info().c_str());
             // }
             switch (byte.op)
             {
@@ -3721,14 +3789,20 @@ class VM {
                 auto& p = frame->co->names[byte.arg];
                 NameRef(p).set(this, frame, frame->pop_value(this));
             } break;
-            case OP_BUILD_ATTR_REF: {
-                auto& attr = frame->co->names[byte.arg];
+            case OP_BUILD_ATTR: {
+                int name = byte.arg >> 1;
+                bool _rvalue = byte.arg % 2 == 1;
+                auto& attr = frame->co->names[name];
                 PyVar obj = frame->pop_value(this);
-                frame->push(PyRef(AttrRef(obj, NameRef(attr))));
+                AttrRef ref = AttrRef(obj, NameRef(attr));
+                if(_rvalue) frame->push(ref.get(this, frame));
+                else frame->push(PyRef(ref));
             } break;
-            case OP_BUILD_INDEX_REF: {
+            case OP_BUILD_INDEX: {
                 PyVar index = frame->pop_value(this);
-                frame->push(PyRef(IndexRef(frame->pop_value(this), index)));
+                auto ref = IndexRef(frame->pop_value(this), index);
+                if(byte.arg == 0) frame->push(PyRef(ref));
+                else frame->push(ref.get(this, frame));
             } break;
             case OP_STORE_REF: {
                 PyVar obj = frame->pop_value(this);
@@ -3757,12 +3831,12 @@ class VM {
             case OP_BUILD_STRING:
             {
                 pkpy::Args items = frame->pop_n_values_reversed(this, byte.arg);
-                _StrStream ss;
+                StrStream ss;
                 for(int i=0; i<items.size(); i++) ss << PyStr_AS_C(asStr(items[i]));
                 frame->push(PyStr(ss.str()));
             } break;
             case OP_LOAD_EVAL_FN: {
-                frame->push(builtins->attribs[m_eval]);
+                frame->push(builtins->attr(m_eval));
             } break;
             case OP_LIST_APPEND: {
                 pkpy::Args args(2);
@@ -3781,7 +3855,7 @@ class VM {
                 {
                     const Str& clsName = frame->co->names[byte.arg].first;
                     PyVar clsBase = frame->pop_value(this);
-                    if(clsBase == None) clsBase = tp_object;
+                    if(clsBase == None) clsBase = _t(tp_object);
                     check_type(clsBase, tp_type);
                     PyVar cls = new_type_object(frame->_module, clsName, clsBase);
                     while(true){
@@ -3853,8 +3927,10 @@ class VM {
             case OP_LOAD_ELLIPSIS: frame->push(Ellipsis); break;
             case OP_ASSERT:
                 {
+                    PyVar _msg = frame->pop_value(this);
+                    Str msg = PyStr_AS_C(asStr(_msg));
                     PyVar expr = frame->pop_value(this);
-                    if(asBool(expr) != True) _error("AssertionError", "");
+                    if(asBool(expr) != True) _error("AssertionError", msg);
                 } break;
             case OP_EXCEPTION_MATCH:
                 {
@@ -3877,7 +3953,7 @@ class VM {
             case OP_BUILD_MAP:
                 {
                     pkpy::Args items = frame->pop_n_values_reversed(this, byte.arg*2);
-                    PyVar obj = call(builtins->attribs["dict"]);
+                    PyVar obj = call(builtins->attr("dict"));
                     for(int i=0; i<items.size(); i+=2){
                         call(obj, __setitem__, pkpy::two_args(items[i], items[i+1]));
                     }
@@ -3888,7 +3964,7 @@ class VM {
                     PyVar list = PyList(
                         frame->pop_n_values_reversed(this, byte.arg).to_list()
                     );
-                    PyVar obj = call(builtins->attribs["set"], pkpy::one_arg(list));
+                    PyVar obj = call(builtins->attr("set"), pkpy::one_arg(list));
                     frame->push(obj);
                 } break;
             case OP_DUP_TOP: frame->push(frame->top_value(this)); break;
@@ -3915,23 +3991,28 @@ class VM {
             case OP_GET_ITER:
                 {
                     PyVar obj = frame->pop_value(this);
-                    PyVarOrNull iter_fn = getattr(obj, __iter__, false);
-                    if(iter_fn != nullptr){
-                        PyVar tmp = call(iter_fn);
-                        PyVarRef var = frame->pop();
-                        check_type(var, tp_ref);
-                        PyIter_AS_C(tmp)->var = var;
-                        frame->push(std::move(tmp));
+                    PyVar iter_obj = nullptr;
+                    if(!obj->is_type(tp_native_iterator)){
+                        PyVarOrNull iter_f = getattr(obj, __iter__, false);
+                        if(iter_f != nullptr) iter_obj = call(iter_f);
                     }else{
-                        TypeError(OBJ_TP_NAME(obj).escape(true) + " object is not iterable");
+                        iter_obj = obj;
                     }
+                    if(iter_obj == nullptr){
+                        TypeError(OBJ_NAME(_t(obj)).escape(true) + " object is not iterable");
+                    }
+                    PyVarRef var = frame->pop();
+                    check_type(var, tp_ref);
+                    PyIter_AS_C(iter_obj)->var = var;
+                    frame->push(std::move(iter_obj));
                 } break;
             case OP_FOR_ITER:
                 {
                     // top() must be PyIter, so no need to try_deref()
                     auto& it = PyIter_AS_C(frame->top());
-                    if(it->has_next()){
-                        PyRef_AS_C(it->var)->set(this, frame, it->next());
+                    PyVar obj = it->next();
+                    if(obj != nullptr){
+                        PyRef_AS_C(it->var)->set(this, frame, std::move(obj));
                     }else{
                         int blockEnd = frame->co->blocks[byte.block].end;
                         frame->jump_abs_safe(blockEnd);
@@ -3988,6 +4069,7 @@ class VM {
                         frame->push(it->second);
                     }
                 } break;
+            case OP_YIELD_VALUE: return _py_op_yield;
             // TODO: using "goto" inside with block may cause __exit__ not called
             case OP_WITH_ENTER: call(frame->pop_value(this), __enter__); break;
             case OP_WITH_EXIT: call(frame->pop_value(this), __exit__); break;
@@ -4008,7 +4090,6 @@ class VM {
         return None;
     }
 
-public:
     pkpy::NameDict _types;
     pkpy::NameDict _modules;                             // loaded modules
     emhash8::HashMap<Str, Str> _lazy_modules;     // lazy loaded modules
@@ -4026,16 +4107,15 @@ public:
     VM(bool use_stdio){
         this->use_stdio = use_stdio;
         if(use_stdio){
-            std::cout.setf(std::ios::unitbuf);
-            std::cerr.setf(std::ios::unitbuf);
             this->_stdout = &std::cout;
             this->_stderr = &std::cerr;
         }else{
-            this->_stdout = new _StrStream();
-            this->_stderr = new _StrStream();
+            this->_stdout = new StrStream();
+            this->_stderr = new StrStream();
         }
 
         init_builtin_types();
+        // for(int i=0; i<128; i++) _ascii_str_pool[i] = new_object(tp_str, std::string(1, (char)i));
     }
 
     PyVar asStr(const PyVar& obj){
@@ -4050,7 +4130,7 @@ public:
     }
 
     PyVar asRepr(const PyVar& obj){
-        if(obj->is_type(tp_type)) return PyStr("<class '" + OBJ_GET(Str, obj->attribs[__name__]) + "'>");
+        if(obj->is_type(tp_type)) return PyStr("<class '" + OBJ_GET(Str, obj->attr(__name__)) + "'>");
         return call(obj, __repr__);
     }
 
@@ -4068,11 +4148,11 @@ public:
     }
 
     PyVar fast_call(const Str& name, pkpy::Args&& args){
-        PyObject* cls = args[0]->type.get();
+        PyObject* cls = _t(args[0]).get();
         while(cls != None.get()) {
-            PyVar* val = cls->attribs.try_get(name);
+            PyVar* val = cls->attr().try_get(name);
             if(val != nullptr) return call(*val, std::move(args));
-            cls = cls->attribs[__base__].get();
+            cls = cls->attr(__base__).get();
         }
         AttributeError(args[0], name);
         return nullptr;
@@ -4083,13 +4163,13 @@ public:
     }
 
     template<typename ArgT>
-    inline std::enable_if_t<std::is_same_v<std::remove_const_t<std::remove_reference_t<ArgT>>, pkpy::Args>, PyVar>
+    inline std::enable_if_t<std::is_same_v<RAW(ArgT), pkpy::Args>, PyVar>
     call(const PyVar& _callable, ArgT&& args){
         return call(_callable, std::forward<ArgT>(args), pkpy::no_arg(), false);
     }
 
     template<typename ArgT>
-    inline std::enable_if_t<std::is_same_v<std::remove_const_t<std::remove_reference_t<ArgT>>, pkpy::Args>, PyVar>
+    inline std::enable_if_t<std::is_same_v<RAW(ArgT), pkpy::Args>, PyVar>
     call(const PyVar& obj, const Str& func, ArgT&& args){
         return call(getattr(obj, func), std::forward<ArgT>(args), pkpy::no_arg(), false);
     }
@@ -4100,14 +4180,14 @@ public:
 
     PyVar call(const PyVar& _callable, pkpy::Args args, const pkpy::Args& kwargs, bool opCall){
         if(_callable->is_type(tp_type)){
-            auto it = _callable->attribs.find(__new__);
+            PyVar* new_f = _callable->attr().try_get(__new__);
             PyVar obj;
-            if(it != _callable->attribs.end()){
-                obj = call(it->second, args, kwargs, false);
+            if(new_f != nullptr){
+                obj = call(*new_f, args, kwargs, false);
             }else{
                 obj = new_object(_callable, DUMMY_VAL);
-                PyVarOrNull init_fn = getattr(obj, __init__, false);
-                if (init_fn != nullptr) call(init_fn, args, kwargs, false);
+                PyVarOrNull init_f = getattr(obj, __init__, false);
+                if (init_f != nullptr) call(init_f, args, kwargs, false);
             }
             return obj;
         }
@@ -4171,15 +4251,18 @@ public:
                 locals[key] = val;
             }
 
-            PyVar* it_m = (*callable)->attribs.try_get(__module__);
-            PyVar _module = it_m != nullptr ? *it_m : top_frame()->_module;
-            if(opCall){
-                _new_frame(fn->code, _module, _locals);
-                return _py_op_call;
+            PyVar* _m = (*callable)->attr().try_get(__module__);
+            PyVar _module = _m != nullptr ? *_m : top_frame()->_module;
+            auto _frame = _new_frame(fn->code, _module, _locals);
+            if(fn->code->is_generator){
+                return PyIter(pkpy::make_shared<BaseIter, Generator>(
+                    this, std::move(_frame)));
             }
-            return _exec(fn->code, _module, _locals);
+            callstack.push(std::move(_frame));
+            if(opCall) return _py_op_call;
+            return _exec();
         }
-        TypeError("'" + OBJ_TP_NAME(*callable) + "' object is not callable");
+        TypeError("'" + OBJ_NAME(_t(*callable)) + "' object is not callable");
         return None;
     }
 
@@ -4202,17 +4285,21 @@ public:
     }
 
     template<typename ...Args>
-    Frame* _new_frame(Args&&... args){
+    inline std::unique_ptr<Frame> _new_frame(Args&&... args){
         if(callstack.size() > maxRecursionDepth){
             _error("RecursionError", "maximum recursion depth exceeded");
         }
-        callstack.emplace(std::make_unique<Frame>(std::forward<Args>(args)...));
-        return callstack.top().get();
+        return std::make_unique<Frame>(std::forward<Args>(args)...);
     }
 
     template<typename ...Args>
-    PyVar _exec(Args&&... args){
-        Frame* frame = _new_frame(std::forward<Args>(args)...);
+    inline PyVar _exec(Args&&... args){
+        callstack.push(_new_frame(std::forward<Args>(args)...));
+        return _exec();
+    }
+
+    PyVar _exec(){
+        Frame* frame = top_frame();
         i64 base_id = frame->id;
         PyVar ret = nullptr;
         bool need_raise = false;
@@ -4222,7 +4309,7 @@ public:
             try{
                 if(need_raise){ need_raise = false; _raise(); }
                 ret = run_frame(frame);
-
+                if(ret == _py_op_yield) return _py_op_yield;
                 if(ret != _py_op_call){
                     if(frame->id == base_id){      // [ frameBase<- ]
                         callstack.pop();
@@ -4253,37 +4340,46 @@ public:
         }
     }
 
+    std::vector<PyVar> _all_types;
+
     PyVar new_type_object(PyVar mod, Str name, PyVar base){
         if(!base->is_type(tp_type)) UNREACHABLE();
-        PyVar obj = pkpy::make_shared<PyObject, Py_<Dummy>>(tp_type, DUMMY_VAL);
+        PyVar obj = pkpy::make_shared<PyObject, Py_<Type>>(tp_type, _all_types.size());
         setattr(obj, __base__, base);
         Str fullName = name;
         if(mod != builtins) fullName = OBJ_NAME(mod) + "." + name;
         setattr(obj, __name__, PyStr(fullName));
         setattr(mod, name, obj);
+        _all_types.push_back(obj);
         return obj;
     }
 
-    PyVar _new_type_object(Str name, PyVar base=nullptr) {
-        if(base == nullptr) base = tp_object;
-        PyVar obj = pkpy::make_shared<PyObject, Py_<Dummy>>(tp_type, DUMMY_VAL);
-        setattr(obj, __base__, base);
+    Type _new_type_object(Str name, Type base=0) {
+        PyVar obj = pkpy::make_shared<PyObject, Py_<Type>>(tp_type, _all_types.size());
+        setattr(obj, __base__, _t(base));
         _types[name] = obj;
-        return obj;
+        _all_types.push_back(obj);
+        return OBJ_GET(Type, obj);
     }
 
     template<typename T>
-    inline PyVar new_object(PyVar type, T _value) {
+    inline PyVar new_object(const PyVar& type, const T& _value) {
         if(!type->is_type(tp_type)) UNREACHABLE();
-        if constexpr (std::is_same_v<T, Dummy>) return pkpy::make_shared<PyObject, Py_<T>>(type, _value);
-        std::vector<int*>& pool = _obj_pool[tid<T>()];
-        if(pool.empty()) return pkpy::make_shared<PyObject, Py_<T>>(type, _value);
-        int* counter = pool.back(); pool.pop_back();
-        *counter = 1;
-        Py_<T>* obj = (Py_<T>*)(counter + 1);
-        obj->_value = std::move(_value);
-        obj->attribs.clear();
-        return PyVar(counter);
+        return pkpy::make_shared<PyObject, Py_<RAW(T)>>(OBJ_GET(Type, type), _value);
+    }
+    template<typename T>
+    inline PyVar new_object(const PyVar& type, T&& _value) {
+        if(!type->is_type(tp_type)) UNREACHABLE();
+        return pkpy::make_shared<PyObject, Py_<RAW(T)>>(OBJ_GET(Type, type), std::move(_value));
+    }
+
+    template<typename T>
+    inline PyVar new_object(Type type, const T& _value) {
+        return pkpy::make_shared<PyObject, Py_<RAW(T)>>(type, _value);
+    }
+    template<typename T>
+    inline PyVar new_object(Type type, T&& _value) {
+        return pkpy::make_shared<PyObject, Py_<RAW(T)>>(type, std::move(_value));
     }
 
     template<typename T, typename... Args>
@@ -4310,20 +4406,22 @@ public:
                 if(!(*root)->is_type(tp_super)) break;
                 depth++;
             }
-            cls = (*root)->type.get();
-            for(int i=0; i<depth; i++) cls = cls->attribs[__base__].get();
+            cls = _t(*root).get();
+            for(int i=0; i<depth; i++) cls = cls->attr(__base__).get();
 
-            it = (*root)->attribs.find(name);
-            if(it != (*root)->attribs.end()) return it->second;        
+            it = (*root)->attr().find(name);
+            if(it != (*root)->attr().end()) return it->second;        
         }else{
-            it = obj->attribs.find(name);
-            if(it != obj->attribs.end()) return it->second;
-            cls = obj->type.get();
+            if(obj->is_attr_valid()){
+                it = obj->attr().find(name);
+                if(it != obj->attr().end()) return it->second;
+            }
+            cls = _t(obj).get();
         }
 
         while(cls != None.get()) {
-            it = cls->attribs.find(name);
-            if(it != cls->attribs.end()){
+            it = cls->attr().find(name);
+            if(it != cls->attr().end()){
                 PyVar valueFromCls = it->second;
                 if(valueFromCls->is_type(tp_function) || valueFromCls->is_type(tp_native_function)){
                     return PyBoundMethod({obj, std::move(valueFromCls)});
@@ -4331,7 +4429,7 @@ public:
                     return valueFromCls;
                 }
             }
-            cls = cls->attribs[__base__].get();
+            cls = cls->attr()[__base__].get();
         }
         if(throw_err) AttributeError(obj, name);
         return nullptr;
@@ -4341,7 +4439,8 @@ public:
     inline void setattr(PyVar& obj, const Str& name, T&& value) {
         PyObject* p = obj.get();
         while(p->is_type(tp_super)) p = static_cast<PyVar*>(p->value())->get();
-        p->attribs[name] = std::forward<T>(value);
+        if(!p->is_attr_valid()) TypeError("cannot set attribute");
+        p->attr()[name] = std::forward<T>(value);
     }
 
     template<int ARGC>
@@ -4356,13 +4455,18 @@ public:
     }
 
     template<int ARGC>
+    void bind_func(Str typeName, Str funcName, NativeFuncRaw fn) {
+        bind_func<ARGC>(_types[typeName], funcName, fn);     
+    }
+
+    template<int ARGC>
     void bind_method(Str typeName, Str funcName, NativeFuncRaw fn) {
         bind_method<ARGC>(_types[typeName], funcName, fn);
     }
 
-    template<int ARGC>
-    void bind_static_method(Str typeName, Str funcName, NativeFuncRaw fn) {
-        bind_func<ARGC>(_types[typeName], funcName, fn);
+    template<int ARGC, typename... Args>
+    void bind_static_method(Args&&... args) {
+        bind_func<ARGC>(std::forward<Args>(args)...);
     }
 
     template<int ARGC>
@@ -4381,7 +4485,7 @@ public:
         }else if(obj->is_type(tp_float)){
             return PyFloat_AS_C(obj);
         }
-        TypeError("expected 'int' or 'float', got " + OBJ_TP_NAME(obj).escape(true));
+        TypeError("expected 'int' or 'float', got " + OBJ_NAME(_t(obj)).escape(true));
         return 0;
     }
 
@@ -4410,7 +4514,7 @@ public:
                 jumpTargets.push_back(byte.arg);
             }
         }
-        _StrStream ss;
+        StrStream ss;
         ss << std::string(54, '-') << '\n';
         ss << co->name << ":\n";
         int prev_line = -1;
@@ -4443,11 +4547,11 @@ public:
             ss << co->blocks[byte.block].to_string();
             if(i != co->codes.size() - 1) ss << '\n';
         }
-        _StrStream consts;
+        StrStream consts;
         consts << "co_consts: ";
         consts << PyStr_AS_C(asRepr(PyList(co->consts)));
 
-        _StrStream names;
+        StrStream names;
         names << "co_names: ";
         pkpy::List list;
         for(int i=0; i<co->names.size(); i++){
@@ -4467,15 +4571,15 @@ public:
     }
 
     // for quick access
-    PyVar tp_object, tp_type, tp_int, tp_float, tp_bool, tp_str;
-    PyVar tp_list, tp_tuple;
-    PyVar tp_function, tp_native_function, tp_native_iterator, tp_bound_method;
-    PyVar tp_slice, tp_range, tp_module, tp_ref;
-    PyVar tp_super, tp_exception;
+    Type tp_object, tp_type, tp_int, tp_float, tp_bool, tp_str;
+    Type tp_list, tp_tuple;
+    Type tp_function, tp_native_function, tp_native_iterator, tp_bound_method;
+    Type tp_slice, tp_range, tp_module, tp_ref;
+    Type tp_super, tp_exception;
 
     template<typename P>
     inline PyVarRef PyRef(P&& value) {
-        static_assert(std::is_base_of<BaseRef, P>::value, "P should derive from BaseRef");
+        static_assert(std::is_base_of<BaseRef, std::remove_reference_t<P>>::value, "P should derive from BaseRef");
         return new_object(tp_ref, std::forward<P>(value));
     }
 
@@ -4485,9 +4589,21 @@ public:
         return (const BaseRef*)(obj->value());
     }
 
+    inline const Str& PyStr_AS_C(const PyVar& obj) {
+        check_type(obj, tp_str);
+        return OBJ_GET(Str, obj);
+    }
+    inline PyVar PyStr(const Str& value) {
+        // some BUGs here
+        // if(value.size() == 1){
+        //     char c = value.c_str()[0];
+        //     if(c >= 0) return _ascii_str_pool[(int)c];
+        // }
+        return new_object(tp_str, value);
+    }
+
     DEF_NATIVE(Int, i64, tp_int)
     DEF_NATIVE(Float, f64, tp_float)
-    DEF_NATIVE(Str, Str, tp_str)
     DEF_NATIVE(List, pkpy::List, tp_list)
     DEF_NATIVE(Tuple, pkpy::Tuple, tp_tuple)
     DEF_NATIVE(Function, pkpy::Function_, tp_function)
@@ -4503,10 +4619,14 @@ public:
     inline const PyVar& PyBool(bool value){return value ? True : False;}
 
     void init_builtin_types(){
-        tp_object = pkpy::make_shared<PyObject, Py_<Dummy>>(nullptr, DUMMY_VAL);
-        tp_type = pkpy::make_shared<PyObject, Py_<Dummy>>(nullptr, DUMMY_VAL);
-        _types["object"] = tp_object;
-        _types["type"] = tp_type;
+        PyVar _tp_object = pkpy::make_shared<PyObject, Py_<Type>>(1, 0);
+        PyVar _tp_type = pkpy::make_shared<PyObject, Py_<Type>>(1, 1);
+        _all_types.push_back(_tp_object);
+        _all_types.push_back(_tp_type);
+        tp_object = 0; tp_type = 1;
+
+        _types["object"] = _tp_object;
+        _types["type"] = _tp_type;
 
         tp_bool = _new_type_object("bool");
         tp_int = _new_type_object("int");
@@ -4533,11 +4653,10 @@ public:
         this->builtins = new_module("builtins");
         this->_main = new_module("__main__");
         this->_py_op_call = new_object(_new_type_object("_internal"), DUMMY_VAL);
+        this->_py_op_yield = new_object(_new_type_object("_internal"), DUMMY_VAL);
 
-        setattr(tp_type, __base__, tp_object);
-        tp_type->type = tp_type;
-        setattr(tp_object, __base__, None);
-        tp_object->type = tp_type;
+        setattr(_t(tp_type), __base__, _t(tp_object));
+        setattr(_t(tp_object), __base__, None);
         
         for (auto& [name, type] : _types) {
             setattr(type, __name__, PyStr(name));
@@ -4567,7 +4686,7 @@ public:
             }
             return x;
         }
-        TypeError("unhashable type: " +  OBJ_TP_NAME(obj).escape(true));
+        TypeError("unhashable type: " +  OBJ_NAME(_t(obj)).escape(true));
         return 0;
     }
 
@@ -4593,6 +4712,7 @@ private:
     }
 
 public:
+    void IOError(const Str& msg) { _error("IOError", msg); }
     void NotImplementedError(){ _error("NotImplementedError", ""); }
     void TypeError(const Str& msg){ _error("TypeError", msg); }
     void ZeroDivisionError(){ _error("ZeroDivisionError", "division by zero"); }
@@ -4601,16 +4721,25 @@ public:
     void NameError(const Str& name){ _error("NameError", "name " + name.escape(true) + " is not defined"); }
 
     void AttributeError(PyVar obj, const Str& name){
-        _error("AttributeError", "type " +  OBJ_TP_NAME(obj).escape(true) + " has no attribute " + name.escape(true));
+        _error("AttributeError", "type " +  OBJ_NAME(_t(obj)).escape(true) + " has no attribute " + name.escape(true));
     }
 
-    inline void check_type(const PyVar& obj, const PyVar& type){
-        if(!obj->is_type(type)) TypeError("expected " + OBJ_NAME(type).escape(true) + ", but got " + OBJ_TP_NAME(obj).escape(true));
+    inline void check_type(const PyVar& obj, Type type){
+        if(obj->is_type(type)) return;
+        TypeError("expected " + OBJ_NAME(_t(type)).escape(true) + ", but got " + OBJ_NAME(_t(obj)).escape(true));
+    }
+
+    inline PyVar& _t(Type t){
+        return _all_types[t.index];
+    }
+
+    inline PyVar& _t(const PyVar& obj){
+        return _all_types[OBJ_GET(Type, _t(obj->type)).index];
     }
 
     template<typename T>
     PyVar register_class(PyVar mod){
-        PyVar type = new_type_object(mod, T::_name(), tp_object);
+        PyVar type = new_type_object(mod, T::_name(), _t(tp_object));
         if(OBJ_NAME(mod) != T::_mod()) UNREACHABLE();
         T::_register(this, mod, type);
         return type;
@@ -4639,7 +4768,7 @@ PyVar NameRef::get(VM* vm, Frame* frame) const{
     if(val) return *val;
     val = frame->f_globals().try_get(name());
     if(val) return *val;
-    val = vm->builtins->attribs.try_get(name());
+    val = vm->builtins->attr().try_get(name());
     if(val) return *val;
     vm->NameError(name());
     return nullptr;
@@ -4695,7 +4824,9 @@ void AttrRef::set(VM* vm, Frame* frame, PyVar val) const{
 }
 
 void AttrRef::del(VM* vm, Frame* frame) const{
-    vm->TypeError("cannot delete attribute");
+    if(!obj->is_attr_valid()) vm->TypeError("cannot delete attribute");
+    if(!obj->attr().contains(attr.name())) vm->AttributeError(obj, attr.name());
+    obj->attr().erase(attr.name());
 }
 
 PyVar IndexRef::get(VM* vm, Frame* frame) const{
@@ -4745,12 +4876,22 @@ inline void Frame::try_deref(VM* vm, PyVar& v){
     if(v->is_type(vm->tp_ref)) v = vm->PyRef_AS_C(v)->get(vm, this);
 }
 
-PyVar pkpy::NativeFunc::operator()(VM* vm, const pkpy::Args& args) const{
+PyVar pkpy::NativeFunc::operator()(VM* vm, pkpy::Args& args) const{
     int args_size = args.size() - (int)method;  // remove self
     if(argc != -1 && args_size != argc) {
         vm->TypeError("expected " + std::to_string(argc) + " arguments, but got " + std::to_string(args_size));
     }
     return f(vm, args);
+}
+
+void CodeObject::optimize(VM* vm){
+    for(int i=1; i<codes.size(); i++){
+        if(codes[i].op == OP_UNARY_NEGATIVE && codes[i-1].op == OP_LOAD_CONST){
+            codes[i].op = OP_NO_OP;
+            int pos = codes[i-1].arg;
+            consts[pos] = vm->num_negated(consts[pos]);
+        }
+    }
 }
 
 
@@ -4991,6 +5132,7 @@ private:
                 case '-': {
                     if(parser->matchchar('=')) parser->set_next_token(TK("-="));
                     else if(parser->matchchar('>')) parser->set_next_token(TK("->"));
+                    else if(parser->matchchar('-')) parser->set_next_token(TK("--"));
                     else parser->set_next_token(TK("-"));
                     return;
                 }
@@ -5069,7 +5211,7 @@ private:
 
     void consume(TokenIndex expected) {
         if (!match(expected)){
-            _StrStream ss;
+            StrStream ss;
             ss << "expected '" << TK_STR(expected) << "', but got '" << TK_STR(peek()) << "'";
             SyntaxError(ss.str());
         }
@@ -5144,7 +5286,7 @@ private:
         this->codes.push(func->code);
         EXPR_TUPLE();
         emit(OP_RETURN_VALUE);
-        func->code->optimize();
+        func->code->optimize(vm);
         this->codes.pop();
         emit(OP_LOAD_LAMBDA, co()->add_const(vm->PyFunction(func)));
     }
@@ -5376,7 +5518,8 @@ __LISTCOMP:
         consume(TK("@id"));
         const Str& name = parser->prev.str();
         int index = co()->add_name(name, NAME_ATTR);
-        emit(OP_BUILD_ATTR_REF, index);
+        index = (index<<1) + (int)co()->_rvalue;
+        emit(OP_BUILD_ATTR, index);
     }
 
     // [:], [:b]
@@ -5405,7 +5548,8 @@ __LISTCOMP:
                 consume(TK("]"));
             }
         }
-        emit(OP_BUILD_INDEX_REF);
+
+        emit(OP_BUILD_INDEX, (int)co()->_rvalue);
     }
 
     void exprValue() {
@@ -5480,7 +5624,7 @@ __LISTCOMP:
             consume(TK("@id"));
             Token tkname = parser->prev;
             int index = co()->add_name(tkname.str(), NAME_ATTR);
-            emit(OP_BUILD_ATTR_REF, index);
+            emit(OP_BUILD_ATTR, (index<<1)+1);
             if (match(TK("as"))) {
                 consume(TK("@id"));
                 tkname = parser->prev;
@@ -5551,7 +5695,8 @@ __LISTCOMP:
     }
 
     void compile_for_loop() {
-        EXPR_FOR_VARS();consume(TK("in")); EXPR_TUPLE();
+        EXPR_FOR_VARS();consume(TK("in"));
+        co()->_rvalue = true; EXPR_TUPLE(); co()->_rvalue = false;
         emit(OP_GET_ITER);
         co()->_enter_block(FOR_LOOP);
         emit(OP_FOR_ITER);
@@ -5595,9 +5740,16 @@ __LISTCOMP:
             if (!co()->_is_curr_block_loop()) SyntaxError("'continue' not properly in loop");
             consume_end_stmt();
             emit(OP_LOOP_CONTINUE);
+        } else if (match(TK("yield"))) {
+            if (codes.size() == 1) SyntaxError("'yield' outside function");
+            co()->_rvalue = true;
+            EXPR_TUPLE();
+            co()->_rvalue = false;
+            consume_end_stmt();
+            co()->is_generator = true;
+            emit(OP_YIELD_VALUE, -1, true);
         } else if (match(TK("return"))) {
-            if (codes.size() == 1)
-                SyntaxError("'return' outside function");
+            if (codes.size() == 1) SyntaxError("'return' outside function");
             if(match_end_stmt()){
                 emit(OP_LOAD_NONE);
             }else{
@@ -5617,6 +5769,8 @@ __LISTCOMP:
             compile_try_except();
         }else if(match(TK("assert"))){
             EXPR();
+            if (match(TK(","))) EXPR();
+            else emit(OP_LOAD_CONST, co()->add_const(vm->PyStr("")));
             emit(OP_ASSERT);
             consume_end_stmt();
         } else if(match(TK("with"))){
@@ -5649,7 +5803,7 @@ __LISTCOMP:
         } else if(match(TK("raise"))){
             consume(TK("@id"));
             int dummy_t = co()->add_name(parser->prev.str(), NAME_SPECIAL);
-            if(match(TK("("))){
+            if(match(TK("(")) && !match(TK(")"))){
                 EXPR(); consume(TK(")"));
             }else{
                 emit(OP_LOAD_NONE);
@@ -5757,7 +5911,7 @@ __LISTCOMP:
         func->code = pkpy::make_shared<CodeObject>(parser->src, func->name);
         this->codes.push(func->code);
         compile_block_body();
-        func->code->optimize();
+        func->code->optimize(vm);
         this->codes.pop();
         emit(OP_LOAD_CONST, co()->add_const(vm->PyFunction(func)));
         if(!is_compiling_class) emit(OP_STORE_FUNCTION);
@@ -5810,7 +5964,7 @@ public:
         if(mode()==EVAL_MODE) {
             EXPR_TUPLE();
             consume(TK("@eof"));
-            code->optimize();
+            code->optimize(vm);
             return code;
         }else if(mode()==JSON_MODE){
             PyVarOrNull value = read_literal();
@@ -5837,7 +5991,7 @@ public:
             }
             match_newlines();
         }
-        code->optimize();
+        code->optimize(vm);
         return code;
     }
 };
@@ -5897,11 +6051,12 @@ public:
         this->current = r.start;
     }
 
-    bool has_next(){
+    inline bool _has_next(){
         return r.step > 0 ? current < r.stop : current > r.stop;
     }
 
     PyVar next(){
+        if(!_has_next()) return nullptr;
         current += r.step;
         return vm->PyInt(current-r.step);
     }
@@ -5913,26 +6068,52 @@ class ArrayIter : public BaseIter {
     const T* p;
 public:
     ArrayIter(VM* vm, PyVar _ref) : BaseIter(vm, _ref) { p = &OBJ_GET(T, _ref);}
-    bool has_next(){ return index < p->size(); }
-    PyVar next(){ return p->operator[](index++); }
+    PyVar next(){
+        if(index == p->size()) return nullptr;
+        return p->operator[](index++); 
+    }
 };
 
 class StringIter : public BaseIter {
     int index = 0;
-    Str str;
+    Str* str;
 public:
     StringIter(VM* vm, PyVar _ref) : BaseIter(vm, _ref) {
-        str = OBJ_GET(Str, _ref);
+        str = &OBJ_GET(Str, _ref);
     }
 
-    bool has_next(){ return index < str.u8_length(); }
-    PyVar next() { return vm->PyStr(str.u8_getitem(index++)); }
+    PyVar next() {
+        if(index == str->u8_length()) return nullptr;
+        return vm->PyStr(str->u8_getitem(index++));
+    }
+};
+
+class Generator: public BaseIter {
+    std::unique_ptr<Frame> frame;
+    int state; // 0,1,2
+public:
+    Generator(VM* vm, std::unique_ptr<Frame>&& frame)
+        : BaseIter(vm, nullptr), frame(std::move(frame)), state(0) {}
+
+    PyVar next() {
+        if(state == 2) return nullptr;
+        vm->callstack.push(std::move(frame));
+        PyVar ret = vm->_exec();
+        if(ret == vm->_py_op_yield){
+            frame = std::move(vm->callstack.top());
+            vm->callstack.pop();
+            state = 1;
+            return frame->pop_value(vm);
+        }else{
+            state = 2;
+            return nullptr;
+        }
+    }
 };
 
 
-
-#define CPP_LAMBDA(x) ([](VM* vm, const pkpy::Args& args) { return x; })
-#define CPP_NOT_IMPLEMENTED() ([](VM* vm, const pkpy::Args& args) { vm->NotImplementedError(); return vm->None; })
+#define CPP_LAMBDA(x) ([](VM* vm, pkpy::Args& args) { return x; })
+#define CPP_NOT_IMPLEMENTED() ([](VM* vm, pkpy::Args& args) { vm->NotImplementedError(); return vm->None; })
 
 CodeObject_ VM::compile(Str source, Str filename, CompileMode mode) {
     Compiler compiler(this, source.c_str(), filename, mode);
@@ -5945,7 +6126,7 @@ CodeObject_ VM::compile(Str source, Str filename, CompileMode mode) {
 }
 
 #define BIND_NUM_ARITH_OPT(name, op)                                                                    \
-    _vm->_bind_methods<1>({"int","float"}, #name, [](VM* vm, const pkpy::Args& args){                 \
+    _vm->_bind_methods<1>({"int","float"}, #name, [](VM* vm, pkpy::Args& args){                 \
         if(args[0]->is_type(vm->tp_int) && args[1]->is_type(vm->tp_int)){                             \
             return vm->PyInt(vm->PyInt_AS_C(args[0]) op vm->PyInt_AS_C(args[1]));                       \
         }else{                                                                                          \
@@ -5954,7 +6135,7 @@ CodeObject_ VM::compile(Str source, Str filename, CompileMode mode) {
     });
 
 #define BIND_NUM_LOGICAL_OPT(name, op, is_eq)                                                           \
-    _vm->_bind_methods<1>({"int","float"}, #name, [](VM* vm, const pkpy::Args& args){                 \
+    _vm->_bind_methods<1>({"int","float"}, #name, [](VM* vm, pkpy::Args& args){                 \
         bool _0 = args[0]->is_type(vm->tp_int) || args[0]->is_type(vm->tp_float);                     \
         bool _1 = args[1]->is_type(vm->tp_int) || args[1]->is_type(vm->tp_float);                     \
         if(!_0 || !_1){                                                                                 \
@@ -5980,29 +6161,29 @@ void init_builtins(VM* _vm) {
 #undef BIND_NUM_ARITH_OPT
 #undef BIND_NUM_LOGICAL_OPT
 
-    _vm->bind_builtin_func<1>("__sys_stdout_write", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<1>("__sys_stdout_write", [](VM* vm, pkpy::Args& args) {
         (*vm->_stdout) << vm->PyStr_AS_C(args[0]);
         return vm->None;
     });
 
-    _vm->bind_builtin_func<0>("super", [](VM* vm, const pkpy::Args& args) {
-        auto it = vm->top_frame()->f_locals().find(m_self);
-        if(it == vm->top_frame()->f_locals().end()) vm->TypeError("super() can only be called in a class method");
-        return vm->new_object(vm->tp_super, it->second);
+    _vm->bind_builtin_func<0>("super", [](VM* vm, pkpy::Args& args) {
+        const PyVar* self = vm->top_frame()->f_locals().try_get(m_self);
+        if(self == nullptr) vm->TypeError("super() can only be called in a class");
+        return vm->new_object(vm->tp_super, *self);
     });
 
-    _vm->bind_builtin_func<1>("eval", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<1>("eval", [](VM* vm, pkpy::Args& args) {
         CodeObject_ code = vm->compile(vm->PyStr_AS_C(args[0]), "<eval>", EVAL_MODE);
         return vm->_exec(code, vm->top_frame()->_module, vm->top_frame()->_locals);
     });
 
-    _vm->bind_builtin_func<1>("exec", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<1>("exec", [](VM* vm, pkpy::Args& args) {
         CodeObject_ code = vm->compile(vm->PyStr_AS_C(args[0]), "<exec>", EXEC_MODE);
         vm->_exec(code, vm->top_frame()->_module, vm->top_frame()->_locals);
         return vm->None;
     });
 
-    _vm->bind_builtin_func<-1>("exit", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<-1>("exit", [](VM* vm, pkpy::Args& args) {
         if(args.size() == 0) std::exit(0);
         else if(args.size() == 1) std::exit((int)vm->PyInt_AS_C(args[0]));
         else vm->TypeError("exit() takes at most 1 argument");
@@ -6013,68 +6194,65 @@ void init_builtins(VM* _vm) {
     _vm->bind_builtin_func<1>("hash", CPP_LAMBDA(vm->PyInt(vm->hash(args[0]))));
     _vm->bind_builtin_func<1>("len", CPP_LAMBDA(vm->call(args[0], __len__, pkpy::no_arg())));
 
-    _vm->bind_builtin_func<1>("chr", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<1>("chr", [](VM* vm, pkpy::Args& args) {
         i64 i = vm->PyInt_AS_C(args[0]);
         if (i < 0 || i > 128) vm->ValueError("chr() arg not in range(128)");
         return vm->PyStr(std::string(1, (char)i));
     });
 
-    _vm->bind_builtin_func<1>("ord", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<1>("ord", [](VM* vm, pkpy::Args& args) {
         Str s = vm->PyStr_AS_C(args[0]);
         if (s.size() != 1) vm->TypeError("ord() expected an ASCII character");
         return vm->PyInt((i64)(s.c_str()[0]));
     });
 
-    _vm->bind_builtin_func<2>("hasattr", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<2>("hasattr", [](VM* vm, pkpy::Args& args) {
         return vm->PyBool(vm->getattr(args[0], vm->PyStr_AS_C(args[1]), false) != nullptr);
     });
 
-    _vm->bind_builtin_func<3>("setattr", [](VM* vm, const pkpy::Args& args) {
-        PyVar obj = args[0];
-        vm->setattr(obj, vm->PyStr_AS_C(args[1]), args[2]);
+    _vm->bind_builtin_func<3>("setattr", [](VM* vm, pkpy::Args& args) {
+        vm->setattr(args[0], vm->PyStr_AS_C(args[1]), args[2]);
         return vm->None;
     });
 
-    _vm->bind_builtin_func<2>("getattr", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<2>("getattr", [](VM* vm, pkpy::Args& args) {
         Str name = vm->PyStr_AS_C(args[1]);
         return vm->getattr(args[0], name);
     });
 
-    _vm->bind_builtin_func<1>("hex", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<1>("hex", [](VM* vm, pkpy::Args& args) {
         std::stringstream ss;
         ss << std::hex << vm->PyInt_AS_C(args[0]);
         return vm->PyStr("0x" + ss.str());
     });
 
-    _vm->bind_builtin_func<1>("dir", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_builtin_func<1>("dir", [](VM* vm, pkpy::Args& args) {
         std::vector<Str> names;
-        for (auto& [k, _] : args[0]->attribs) names.push_back(k);
-        for (auto& [k, _] : args[0]->type->attribs) {
-            if (k.find("__") == 0) continue;
+        if(args[0]->is_attr_valid()){
+            for (auto& [k, _] : args[0]->attr()) names.push_back(k);
+        }
+        for (auto& [k, _] : vm->_t(args[0])->attr()) {
             if (std::find(names.begin(), names.end(), k) == names.end()) names.push_back(k);
         }
         pkpy::List ret;
         for (const auto& name : names) ret.push_back(vm->PyStr(name));
-        std::sort(ret.begin(), ret.end(), [vm](const PyVar& a, const PyVar& b) {
-            return vm->PyStr_AS_C(a) < vm->PyStr_AS_C(b);
-        });
-        return vm->PyList(ret);
+        return vm->PyList(std::move(ret));
     });
 
-    _vm->bind_method<0>("object", "__repr__", [](VM* vm, const pkpy::Args& args) {
-        PyVar _self = args[0];
-        std::stringstream ss;
-        ss << std::hex << (uintptr_t)_self.get();
-        Str s = "<" + OBJ_TP_NAME(_self) + " object at 0x" + ss.str() + ">";
+    _vm->bind_method<0>("object", "__repr__", [](VM* vm, pkpy::Args& args) {
+        PyVar self = args[0];
+        StrStream ss;
+        ss << std::hex << (uintptr_t)self.get();
+        Str s = "<" + OBJ_NAME(vm->_t(self)) + " object at 0x" + ss.str() + ">";
         return vm->PyStr(s);
     });
 
     _vm->bind_method<1>("object", "__eq__", CPP_LAMBDA(vm->PyBool(args[0] == args[1])));
     _vm->bind_method<1>("object", "__ne__", CPP_LAMBDA(vm->PyBool(args[0] != args[1])));
 
-    _vm->bind_static_method<1>("type", "__new__", CPP_LAMBDA(args[0]->type));
+    _vm->bind_static_method<1>("type", "__new__", CPP_LAMBDA(vm->_t(args[0])));
 
-    _vm->bind_static_method<-1>("range", "__new__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_static_method<-1>("range", "__new__", [](VM* vm, pkpy::Args& args) {
         pkpy::Range r;
         switch (args.size()) {
             case 1: r.stop = vm->PyInt_AS_C(args[0]); break;
@@ -6092,13 +6270,13 @@ void init_builtins(VM* _vm) {
     _vm->bind_method<0>("NoneType", "__repr__", CPP_LAMBDA(vm->PyStr("None")));
     _vm->bind_method<0>("NoneType", "__json__", CPP_LAMBDA(vm->PyStr("null")));
 
-    _vm->_bind_methods<1>({"int", "float"}, "__truediv__", [](VM* vm, const pkpy::Args& args) {
+    _vm->_bind_methods<1>({"int", "float"}, "__truediv__", [](VM* vm, pkpy::Args& args) {
         f64 rhs = vm->num_to_float(args[1]);
         if (rhs == 0) vm->ZeroDivisionError();
         return vm->PyFloat(vm->num_to_float(args[0]) / rhs);
     });
 
-    _vm->_bind_methods<1>({"int", "float"}, "__pow__", [](VM* vm, const pkpy::Args& args) {
+    _vm->_bind_methods<1>({"int", "float"}, "__pow__", [](VM* vm, pkpy::Args& args) {
         if(args[0]->is_type(vm->tp_int) && args[1]->is_type(vm->tp_int)){
             return vm->PyInt((i64)round(pow(vm->PyInt_AS_C(args[0]), vm->PyInt_AS_C(args[1]))));
         }else{
@@ -6107,7 +6285,7 @@ void init_builtins(VM* _vm) {
     });
 
     /************ PyInt ************/
-    _vm->bind_static_method<1>("int", "__new__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_static_method<1>("int", "__new__", [](VM* vm, pkpy::Args& args) {
         if (args[0]->is_type(vm->tp_int)) return args[0];
         if (args[0]->is_type(vm->tp_float)) return vm->PyInt((i64)vm->PyFloat_AS_C(args[0]));
         if (args[0]->is_type(vm->tp_bool)) return vm->PyInt(vm->PyBool_AS_C(args[0]) ? 1 : 0);
@@ -6126,28 +6304,28 @@ void init_builtins(VM* _vm) {
         return vm->None;
     });
 
-    _vm->bind_method<1>("int", "__floordiv__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("int", "__floordiv__", [](VM* vm, pkpy::Args& args) {
         i64 rhs = vm->PyInt_AS_C(args[1]);
         if(rhs == 0) vm->ZeroDivisionError();
         return vm->PyInt(vm->PyInt_AS_C(args[0]) / rhs);
     });
 
-    _vm->bind_method<1>("int", "__mod__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("int", "__mod__", [](VM* vm, pkpy::Args& args) {
         i64 rhs = vm->PyInt_AS_C(args[1]);
         if(rhs == 0) vm->ZeroDivisionError();
         return vm->PyInt(vm->PyInt_AS_C(args[0]) % rhs);
     });
 
-    _vm->bind_method<0>("int", "__repr__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("int", "__repr__", [](VM* vm, pkpy::Args& args) {
         return vm->PyStr(std::to_string(vm->PyInt_AS_C(args[0])));
     });
 
-    _vm->bind_method<0>("int", "__json__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("int", "__json__", [](VM* vm, pkpy::Args& args) {
         return vm->PyStr(std::to_string(vm->PyInt_AS_C(args[0])));
     });
 
 #define __INT_BITWISE_OP(name,op) \
-    _vm->bind_method<1>("int", #name, [](VM* vm, const pkpy::Args& args) {                    \
+    _vm->bind_method<1>("int", #name, [](VM* vm, pkpy::Args& args) {                    \
         return vm->PyInt(vm->PyInt_AS_C(args[0]) op vm->PyInt_AS_C(args[1]));     \
     });
 
@@ -6160,7 +6338,7 @@ void init_builtins(VM* _vm) {
 #undef __INT_BITWISE_OP
 
     /************ PyFloat ************/
-    _vm->bind_static_method<1>("float", "__new__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_static_method<1>("float", "__new__", [](VM* vm, pkpy::Args& args) {
         if (args[0]->is_type(vm->tp_int)) return vm->PyFloat((f64)vm->PyInt_AS_C(args[0]));
         if (args[0]->is_type(vm->tp_float)) return args[0];
         if (args[0]->is_type(vm->tp_bool)) return vm->PyFloat(vm->PyBool_AS_C(args[0]) ? 1.0 : 0.0);
@@ -6179,17 +6357,17 @@ void init_builtins(VM* _vm) {
         return vm->None;
     });
 
-    _vm->bind_method<0>("float", "__repr__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("float", "__repr__", [](VM* vm, pkpy::Args& args) {
         f64 val = vm->PyFloat_AS_C(args[0]);
         if(std::isinf(val) || std::isnan(val)) return vm->PyStr(std::to_string(val));
-        _StrStream ss;
+        StrStream ss;
         ss << std::setprecision(std::numeric_limits<f64>::max_digits10-1) << val;
         std::string s = ss.str();
         if(std::all_of(s.begin()+1, s.end(), isdigit)) s += ".0";
         return vm->PyStr(s);
     });
 
-    _vm->bind_method<0>("float", "__json__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("float", "__json__", [](VM* vm, pkpy::Args& args) {
         f64 val = vm->PyFloat_AS_C(args[0]);
         if(std::isinf(val) || std::isnan(val)) vm->ValueError("cannot jsonify 'nan' or 'inf'");
         return vm->PyStr(std::to_string(val));
@@ -6198,21 +6376,21 @@ void init_builtins(VM* _vm) {
     /************ PyString ************/
     _vm->bind_static_method<1>("str", "__new__", CPP_LAMBDA(vm->asStr(args[0])));
 
-    _vm->bind_method<1>("str", "__add__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "__add__", [](VM* vm, pkpy::Args& args) {
         const Str& lhs = vm->PyStr_AS_C(args[0]);
         const Str& rhs = vm->PyStr_AS_C(args[1]);
         return vm->PyStr(lhs + rhs);
     });
 
-    _vm->bind_method<0>("str", "__len__", [](VM* vm, const pkpy::Args& args) {
-        const Str& _self = vm->PyStr_AS_C(args[0]);
-        return vm->PyInt(_self.u8_length());
+    _vm->bind_method<0>("str", "__len__", [](VM* vm, pkpy::Args& args) {
+        const Str& self = vm->PyStr_AS_C(args[0]);
+        return vm->PyInt(self.u8_length());
     });
 
-    _vm->bind_method<1>("str", "__contains__", [](VM* vm, const pkpy::Args& args) {
-        const Str& _self = vm->PyStr_AS_C(args[0]);
-        const Str& _other = vm->PyStr_AS_C(args[1]);
-        return vm->PyBool(_self.find(_other) != Str::npos);
+    _vm->bind_method<1>("str", "__contains__", [](VM* vm, pkpy::Args& args) {
+        const Str& self = vm->PyStr_AS_C(args[0]);
+        const Str& other = vm->PyStr_AS_C(args[1]);
+        return vm->PyBool(self.find(other) != Str::npos);
     });
 
     _vm->bind_method<0>("str", "__str__", CPP_LAMBDA(args[0]));
@@ -6221,29 +6399,29 @@ void init_builtins(VM* _vm) {
         vm->PyIter(pkpy::make_shared<BaseIter, StringIter>(vm, args[0]))
     ));
 
-    _vm->bind_method<0>("str", "__repr__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("str", "__repr__", [](VM* vm, pkpy::Args& args) {
         const Str& _self = vm->PyStr_AS_C(args[0]);
         return vm->PyStr(_self.escape(true));
     });
 
-    _vm->bind_method<0>("str", "__json__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("str", "__json__", [](VM* vm, pkpy::Args& args) {
         const Str& _self = vm->PyStr_AS_C(args[0]);
         return vm->PyStr(_self.escape(false));
     });
 
-    _vm->bind_method<1>("str", "__eq__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "__eq__", [](VM* vm, pkpy::Args& args) {
         if(args[0]->is_type(vm->tp_str) && args[1]->is_type(vm->tp_str))
             return vm->PyBool(vm->PyStr_AS_C(args[0]) == vm->PyStr_AS_C(args[1]));
         return vm->PyBool(args[0] == args[1]);
     });
 
-    _vm->bind_method<1>("str", "__ne__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "__ne__", [](VM* vm, pkpy::Args& args) {
         if(args[0]->is_type(vm->tp_str) && args[1]->is_type(vm->tp_str))
             return vm->PyBool(vm->PyStr_AS_C(args[0]) != vm->PyStr_AS_C(args[1]));
         return vm->PyBool(args[0] != args[1]);
     });
 
-    _vm->bind_method<1>("str", "__getitem__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "__getitem__", [](VM* vm, pkpy::Args& args) {
         const Str& _self (vm->PyStr_AS_C(args[0]));
 
         if(args[1]->is_type(vm->tp_slice)){
@@ -6257,19 +6435,19 @@ void init_builtins(VM* _vm) {
         return vm->PyStr(_self.u8_getitem(_index));
     });
 
-    _vm->bind_method<1>("str", "__gt__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "__gt__", [](VM* vm, pkpy::Args& args) {
         const Str& _self (vm->PyStr_AS_C(args[0]));
         const Str& _obj (vm->PyStr_AS_C(args[1]));
         return vm->PyBool(_self > _obj);
     });
 
-    _vm->bind_method<1>("str", "__lt__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "__lt__", [](VM* vm, pkpy::Args& args) {
         const Str& _self (vm->PyStr_AS_C(args[0]));
         const Str& _obj (vm->PyStr_AS_C(args[1]));
         return vm->PyBool(_self < _obj);
     });
 
-    _vm->bind_method<2>("str", "replace", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<2>("str", "replace", [](VM* vm, pkpy::Args& args) {
         const Str& _self = vm->PyStr_AS_C(args[0]);
         const Str& _old = vm->PyStr_AS_C(args[1]);
         const Str& _new = vm->PyStr_AS_C(args[2]);
@@ -6283,21 +6461,21 @@ void init_builtins(VM* _vm) {
         return vm->PyStr(_copy);
     });
 
-    _vm->bind_method<1>("str", "startswith", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "startswith", [](VM* vm, pkpy::Args& args) {
         const Str& _self = vm->PyStr_AS_C(args[0]);
         const Str& _prefix = vm->PyStr_AS_C(args[1]);
         return vm->PyBool(_self.find(_prefix) == 0);
     });
 
-    _vm->bind_method<1>("str", "endswith", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "endswith", [](VM* vm, pkpy::Args& args) {
         const Str& _self = vm->PyStr_AS_C(args[0]);
         const Str& _suffix = vm->PyStr_AS_C(args[1]);
         return vm->PyBool(_self.rfind(_suffix) == _self.length() - _suffix.length());
     });
 
-    _vm->bind_method<1>("str", "join", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("str", "join", [](VM* vm, pkpy::Args& args) {
         const Str& self = vm->PyStr_AS_C(args[0]);
-        _StrStream ss;
+        StrStream ss;
         if(args[1]->is_type(vm->tp_list)){
             const pkpy::List& a = vm->PyList_AS_C(args[1]);
             for(int i = 0; i < a.size(); i++){
@@ -6317,13 +6495,22 @@ void init_builtins(VM* _vm) {
     });
 
     /************ PyList ************/
-    _vm->bind_method<1>("list", "append", [](VM* vm, const pkpy::Args& args) {
-        pkpy::List& _self = vm->PyList_AS_C(args[0]);
-        _self.push_back(args[1]);
+    _vm->bind_method<1>("list", "append", [](VM* vm, pkpy::Args& args) {
+        pkpy::List& self = vm->PyList_AS_C(args[0]);
+        self.push_back(args[1]);
         return vm->None;
     });
 
-    _vm->bind_method<2>("list", "insert", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("list", "__mul__", [](VM* vm, pkpy::Args& args) {
+        const pkpy::List& self = vm->PyList_AS_C(args[0]);
+        int n = (int)vm->PyInt_AS_C(args[1]);
+        pkpy::List result;
+        result.reserve(self.size() * n);
+        for(int i = 0; i < n; i++) result.insert(result.end(), self.begin(), self.end());
+        return vm->PyList(std::move(result));
+    });
+
+    _vm->bind_method<2>("list", "insert", [](VM* vm, pkpy::Args& args) {
         pkpy::List& _self = vm->PyList_AS_C(args[0]);
         int _index = (int)vm->PyInt_AS_C(args[1]);
         if(_index < 0) _index += _self.size();
@@ -6333,16 +6520,16 @@ void init_builtins(VM* _vm) {
         return vm->None;
     });
 
-    _vm->bind_method<0>("list", "clear", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("list", "clear", [](VM* vm, pkpy::Args& args) {
         vm->PyList_AS_C(args[0]).clear();
         return vm->None;
     });
 
-    _vm->bind_method<0>("list", "copy", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("list", "copy", [](VM* vm, pkpy::Args& args) {
         return vm->PyList(vm->PyList_AS_C(args[0]));
     });
 
-    _vm->bind_method<1>("list", "__add__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("list", "__add__", [](VM* vm, pkpy::Args& args) {
         const pkpy::List& _self = vm->PyList_AS_C(args[0]);
         const pkpy::List& _obj = vm->PyList_AS_C(args[1]);
         pkpy::List _new_list = _self;
@@ -6350,16 +6537,16 @@ void init_builtins(VM* _vm) {
         return vm->PyList(_new_list);
     });
 
-    _vm->bind_method<0>("list", "__len__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("list", "__len__", [](VM* vm, pkpy::Args& args) {
         const pkpy::List& _self = vm->PyList_AS_C(args[0]);
         return vm->PyInt(_self.size());
     });
 
-    _vm->bind_method<0>("list", "__iter__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("list", "__iter__", [](VM* vm, pkpy::Args& args) {
         return vm->PyIter(pkpy::make_shared<BaseIter, ArrayIter<pkpy::List>>(vm, args[0]));
     });
 
-    _vm->bind_method<1>("list", "__getitem__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("list", "__getitem__", [](VM* vm, pkpy::Args& args) {
         const pkpy::List& self = vm->PyList_AS_C(args[0]);
 
         if(args[1]->is_type(vm->tp_slice)){
@@ -6375,7 +6562,7 @@ void init_builtins(VM* _vm) {
         return self[index];
     });
 
-    _vm->bind_method<2>("list", "__setitem__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<2>("list", "__setitem__", [](VM* vm, pkpy::Args& args) {
         pkpy::List& _self = vm->PyList_AS_C(args[0]);
         int _index = (int)vm->PyInt_AS_C(args[1]);
         _index = vm->normalized_index(_index, _self.size());
@@ -6383,7 +6570,7 @@ void init_builtins(VM* _vm) {
         return vm->None;
     });
 
-    _vm->bind_method<1>("list", "__delitem__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("list", "__delitem__", [](VM* vm, pkpy::Args& args) {
         pkpy::List& _self = vm->PyList_AS_C(args[0]);
         int _index = (int)vm->PyInt_AS_C(args[1]);
         _index = vm->normalized_index(_index, _self.size());
@@ -6392,16 +6579,16 @@ void init_builtins(VM* _vm) {
     });
 
     /************ PyTuple ************/
-    _vm->bind_static_method<1>("tuple", "__new__", [](VM* vm, const pkpy::Args& args) {
-        pkpy::List _list = vm->PyList_AS_C(vm->call(vm->builtins->attribs["list"], args));
+    _vm->bind_static_method<1>("tuple", "__new__", [](VM* vm, pkpy::Args& args) {
+        pkpy::List _list = vm->PyList_AS_C(vm->call(vm->builtins->attr("list"), args));
         return vm->PyTuple(std::move(_list));
     });
 
-    _vm->bind_method<0>("tuple", "__iter__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("tuple", "__iter__", [](VM* vm, pkpy::Args& args) {
         return vm->PyIter(pkpy::make_shared<BaseIter, ArrayIter<pkpy::Args>>(vm, args[0]));
     });
 
-    _vm->bind_method<1>("tuple", "__getitem__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("tuple", "__getitem__", [](VM* vm, pkpy::Args& args) {
         const pkpy::Tuple& self = vm->PyTuple_AS_C(args[0]);
 
         if(args[1]->is_type(vm->tp_slice)){
@@ -6417,7 +6604,7 @@ void init_builtins(VM* _vm) {
         return self[index];
     });
 
-    _vm->bind_method<0>("tuple", "__len__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("tuple", "__len__", [](VM* vm, pkpy::Args& args) {
         const pkpy::Tuple& self = vm->PyTuple_AS_C(args[0]);
         return vm->PyInt(self.size());
     });
@@ -6425,17 +6612,17 @@ void init_builtins(VM* _vm) {
     /************ PyBool ************/
     _vm->bind_static_method<1>("bool", "__new__", CPP_LAMBDA(vm->asBool(args[0])));
 
-    _vm->bind_method<0>("bool", "__repr__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("bool", "__repr__", [](VM* vm, pkpy::Args& args) {
         bool val = vm->PyBool_AS_C(args[0]);
         return vm->PyStr(val ? "True" : "False");
     });
 
-    _vm->bind_method<0>("bool", "__json__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<0>("bool", "__json__", [](VM* vm, pkpy::Args& args) {
         bool val = vm->PyBool_AS_C(args[0]);
         return vm->PyStr(val ? "true" : "false");
     });
 
-    _vm->bind_method<1>("bool", "__xor__", [](VM* vm, const pkpy::Args& args) {
+    _vm->bind_method<1>("bool", "__xor__", [](VM* vm, pkpy::Args& args) {
         bool _self = vm->PyBool_AS_C(args[0]);
         bool _obj = vm->PyBool_AS_C(args[1]);
         return vm->PyBool(_self ^ _obj);
@@ -6458,7 +6645,7 @@ void init_builtins(VM* _vm) {
 
 void add_module_time(VM* vm){
     PyVar mod = vm->new_module("time");
-    vm->bind_func<0>(mod, "time", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<0>(mod, "time", [](VM* vm, pkpy::Args& args) {
         auto now = std::chrono::high_resolution_clock::now();
         return vm->PyFloat(std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() / 1000000.0);
     });
@@ -6471,7 +6658,7 @@ void add_module_sys(VM* vm){
     vm->bind_func<1>(mod, "getrefcount", CPP_LAMBDA(vm->PyInt(args[0].use_count())));
     vm->bind_func<0>(mod, "getrecursionlimit", CPP_LAMBDA(vm->PyInt(vm->maxRecursionDepth)));
 
-    vm->bind_func<1>(mod, "setrecursionlimit", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<1>(mod, "setrecursionlimit", [](VM* vm, pkpy::Args& args) {
         vm->maxRecursionDepth = (int)vm->PyInt_AS_C(args[0]);
         return vm->None;
     });
@@ -6479,7 +6666,7 @@ void add_module_sys(VM* vm){
 
 void add_module_json(VM* vm){
     PyVar mod = vm->new_module("json");
-    vm->bind_func<1>(mod, "loads", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<1>(mod, "loads", [](VM* vm, pkpy::Args& args) {
         const Str& expr = vm->PyStr_AS_C(args[0]);
         CodeObject_ code = vm->compile(expr, "<json>", JSON_MODE);
         return vm->_exec(code, vm->top_frame()->_module, vm->top_frame()->_locals);
@@ -6493,24 +6680,92 @@ void add_module_math(VM* vm){
     vm->setattr(mod, "pi", vm->PyFloat(3.1415926535897932384));
     vm->setattr(mod, "e" , vm->PyFloat(2.7182818284590452354));
 
-    vm->bind_func<1>(mod, "log", CPP_LAMBDA(vm->PyFloat(log(vm->num_to_float(args[0])))));
-    vm->bind_func<1>(mod, "log10", CPP_LAMBDA(vm->PyFloat(log10(vm->num_to_float(args[0])))));
-    vm->bind_func<1>(mod, "log2", CPP_LAMBDA(vm->PyFloat(log2(vm->num_to_float(args[0])))));
-    vm->bind_func<1>(mod, "sin", CPP_LAMBDA(vm->PyFloat(sin(vm->num_to_float(args[0])))));
-    vm->bind_func<1>(mod, "cos", CPP_LAMBDA(vm->PyFloat(cos(vm->num_to_float(args[0])))));
-    vm->bind_func<1>(mod, "tan", CPP_LAMBDA(vm->PyFloat(tan(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "log", CPP_LAMBDA(vm->PyFloat(std::log(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "log10", CPP_LAMBDA(vm->PyFloat(std::log10(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "log2", CPP_LAMBDA(vm->PyFloat(std::log2(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "sin", CPP_LAMBDA(vm->PyFloat(std::sin(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "cos", CPP_LAMBDA(vm->PyFloat(std::cos(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "tan", CPP_LAMBDA(vm->PyFloat(std::tan(vm->num_to_float(args[0])))));
     vm->bind_func<1>(mod, "isnan", CPP_LAMBDA(vm->PyBool(std::isnan(vm->num_to_float(args[0])))));
     vm->bind_func<1>(mod, "isinf", CPP_LAMBDA(vm->PyBool(std::isinf(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "fabs", CPP_LAMBDA(vm->PyFloat(std::fabs(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "floor", CPP_LAMBDA(vm->PyInt((i64)std::floor(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "ceil", CPP_LAMBDA(vm->PyInt((i64)std::ceil(vm->num_to_float(args[0])))));
+    vm->bind_func<1>(mod, "sqrt", CPP_LAMBDA(vm->PyFloat(std::sqrt(vm->num_to_float(args[0])))));
 }
 
 void add_module_dis(VM* vm){
     PyVar mod = vm->new_module("dis");
-    vm->bind_func<1>(mod, "dis", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<1>(mod, "dis", [](VM* vm, pkpy::Args& args) {
         CodeObject_ code = vm->PyFunction_AS_C(args[0])->code;
         (*vm->_stdout) << vm->disassemble(code);
         return vm->None;
     });
 }
+
+#include <fstream>
+struct FileIO {
+    PY_CLASS(io, FileIO)
+
+    Str file;
+    Str mode;
+    std::fstream _fs;
+
+    FileIO(VM* vm, Str file, Str mode): file(file), mode(mode) {
+        if(mode == "rt" || mode == "r"){
+            _fs.open(file, std::ios::in);
+        }else if(mode == "wt" || mode == "w"){
+            _fs.open(file, std::ios::out);
+        }else if(mode == "at" || mode == "a"){
+            _fs.open(file, std::ios::app);
+        }
+        if(!_fs.is_open()) vm->IOError(strerror(errno));
+    }
+
+    static void _register(VM* vm, PyVar mod, PyVar type){
+        vm->bind_static_method<2>(type, "__new__", [](VM* vm, pkpy::Args& args){
+            return vm->new_object<FileIO>(
+                vm, vm->PyStr_AS_C(args[0]), vm->PyStr_AS_C(args[1])
+            );
+        });
+
+        vm->bind_method<0>(type, "read", [](VM* vm, pkpy::Args& args){
+            FileIO& io = vm->py_cast<FileIO>(args[0]);
+            std::string buffer;
+            io._fs >> buffer;
+            return vm->PyStr(buffer);
+        });
+
+        vm->bind_method<1>(type, "write", [](VM* vm, pkpy::Args& args){
+            FileIO& io = vm->py_cast<FileIO>(args[0]);
+            io._fs << vm->PyStr_AS_C(args[1]);
+            return vm->None;
+        });
+
+        vm->bind_method<0>(type, "close", [](VM* vm, pkpy::Args& args){
+            FileIO& io = vm->py_cast<FileIO>(args[0]);
+            io._fs.close();
+            return vm->None;
+        });
+
+        vm->bind_method<0>(type, "__exit__", [](VM* vm, pkpy::Args& args){
+            FileIO& io = vm->py_cast<FileIO>(args[0]);
+            io._fs.close();
+            return vm->None;
+        });
+
+        vm->bind_method<0>(type, "__enter__", CPP_LAMBDA(vm->None));
+    }
+};
+void add_module_io(VM* vm){
+    PyVar mod = vm->new_module("io");
+    PyVar type = vm->register_class<FileIO>(mod);
+    vm->bind_builtin_func<2>("open", [type](VM* vm, const pkpy::Args& args){
+        return vm->call(type, args);
+    });
+}
+
+void add_module_os(VM* vm){}
 
 struct ReMatch {
     PY_CLASS(re, Match)
@@ -6525,12 +6780,12 @@ struct ReMatch {
         vm->bind_method<0>(type, "start", CPP_LAMBDA(vm->PyInt(vm->py_cast<ReMatch>(args[0]).start)));
         vm->bind_method<0>(type, "end", CPP_LAMBDA(vm->PyInt(vm->py_cast<ReMatch>(args[0]).end)));
 
-        vm->bind_method<0>(type, "span", [](VM* vm, const pkpy::Args& args) {
+        vm->bind_method<0>(type, "span", [](VM* vm, pkpy::Args& args) {
             auto& self = vm->py_cast<ReMatch>(args[0]);
             return vm->PyTuple({ vm->PyInt(self.start), vm->PyInt(self.end) });
         });
 
-        vm->bind_method<1>(type, "group", [](VM* vm, const pkpy::Args& args) {
+        vm->bind_method<1>(type, "group", [](VM* vm, pkpy::Args& args) {
             auto& self = vm->py_cast<ReMatch>(args[0]);
             int index = (int)vm->PyInt_AS_C(args[1]);
             index = vm->normalized_index(index, self.m.size());
@@ -6555,19 +6810,19 @@ void add_module_re(VM* vm){
     PyVar mod = vm->new_module("re");
     vm->register_class<ReMatch>(mod);
 
-    vm->bind_func<2>(mod, "match", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<2>(mod, "match", [](VM* vm, pkpy::Args& args) {
         const Str& pattern = vm->PyStr_AS_C(args[0]);
         const Str& string = vm->PyStr_AS_C(args[1]);
         return _regex_search(pattern, string, true, vm);
     });
 
-    vm->bind_func<2>(mod, "search", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<2>(mod, "search", [](VM* vm, pkpy::Args& args) {
         const Str& pattern = vm->PyStr_AS_C(args[0]);
         const Str& string = vm->PyStr_AS_C(args[1]);
         return _regex_search(pattern, string, false, vm);
     });
 
-    vm->bind_func<3>(mod, "sub", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<3>(mod, "sub", [](VM* vm, pkpy::Args& args) {
         const Str& pattern = vm->PyStr_AS_C(args[0]);
         const Str& repl = vm->PyStr_AS_C(args[1]);
         const Str& string = vm->PyStr_AS_C(args[2]);
@@ -6575,7 +6830,7 @@ void add_module_re(VM* vm){
         return vm->PyStr(std::regex_replace(string, re, repl));
     });
 
-    vm->bind_func<2>(mod, "split", [](VM* vm, const pkpy::Args& args) {
+    vm->bind_func<2>(mod, "split", [](VM* vm, pkpy::Args& args) {
         const Str& pattern = vm->PyStr_AS_C(args[0]);
         const Str& string = vm->PyStr_AS_C(args[1]);
         std::regex re(pattern);
@@ -6588,6 +6843,34 @@ void add_module_re(VM* vm){
         return vm->PyList(vec);
     });
 }
+
+void add_module_random(VM* vm){
+    PyVar mod = vm->new_module("random");
+    std::srand(std::time(0));
+    vm->bind_func<1>(mod, "seed", [](VM* vm, pkpy::Args& args) {
+        std::srand((unsigned int)vm->PyInt_AS_C(args[0]));
+        return vm->None;
+    });
+
+    vm->bind_func<0>(mod, "random", CPP_LAMBDA(vm->PyFloat((f64)std::rand() / RAND_MAX)));
+    vm->bind_func<2>(mod, "randint", [](VM* vm, pkpy::Args& args) {
+        i64 a = vm->PyInt_AS_C(args[0]);
+        i64 b = vm->PyInt_AS_C(args[1]);
+        if(a > b) std::swap(a, b);
+        return vm->PyInt(a + std::rand() % (b - a + 1));
+    });
+
+    vm->bind_func<2>(mod, "uniform", [](VM* vm, pkpy::Args& args) {
+        f64 a = vm->PyFloat_AS_C(args[0]);
+        f64 b = vm->PyFloat_AS_C(args[1]);
+        if(a > b) std::swap(a, b);
+        return vm->PyFloat(a + (b - a) * std::rand() / RAND_MAX);
+    });
+
+    CodeObject_ code = vm->compile(kRandomCode, "random.py", EXEC_MODE);
+    vm->_exec(code, mod, pkpy::make_shared<pkpy::NameDict>());
+}
+
 
 class _PkExported{
 public:
@@ -6646,8 +6929,8 @@ extern "C" {
     /// Return `__repr__` of the result.
     /// If the variable is not found, return `nullptr`.
     char* pkpy_vm_get_global(VM* vm, const char* name){
-        auto it = vm->_main->attribs.find(name);
-        if(it == vm->_main->attribs.end()) return nullptr;
+        auto it = vm->_main->attr().find(name);
+        if(it == vm->_main->attr().end()) return nullptr;
         try{
             Str _repr = vm->PyStr_AS_C(vm->asRepr(it->second));
             return strdup(_repr.c_str());
@@ -6701,11 +6984,12 @@ extern "C" {
         add_module_math(vm);
         add_module_re(vm);
         add_module_dis(vm);
+        add_module_random(vm);
+        add_module_io(vm);
+        add_module_os(vm);
 
         CodeObject_ code = vm->compile(kBuiltinsCode, "<builtins>", EXEC_MODE);
         vm->_exec(code, vm->builtins, pkpy::make_shared<pkpy::NameDict>());
-
-        pkpy_vm_add_module(vm, "random", kRandomCode);
         return vm;
     }
 
@@ -6717,11 +7001,11 @@ extern "C" {
     /// Return a json representing the result.
     char* pkpy_vm_read_output(VM* vm){
         if(vm->use_stdio) return nullptr;
-        _StrStream* s_out = (_StrStream*)(vm->_stdout);
-        _StrStream* s_err = (_StrStream*)(vm->_stderr);
+        StrStream* s_out = (StrStream*)(vm->_stdout);
+        StrStream* s_err = (StrStream*)(vm->_stderr);
         Str _stdout = s_out->str();
         Str _stderr = s_err->str();
-        _StrStream ss;
+        StrStream ss;
         ss << '{' << "\"stdout\": " << _stdout.escape(false);
         ss << ", " << "\"stderr\": " << _stderr.escape(false) << '}';
         s_out->str(""); s_err->str("");
@@ -6760,7 +7044,7 @@ extern "C" {
         std::string f_header = std::string(mod) + '.' + name + '#' + std::to_string(kGlobalBindId++);
         PyVar obj = vm->_modules.contains(mod) ? vm->_modules[mod] : vm->new_module(mod);
         vm->bind_func<-1>(obj, name, [ret_code, f_header](VM* vm, const pkpy::Args& args){
-            _StrStream ss;
+            StrStream ss;
             ss << f_header;
             for(int i=0; i<args.size(); i++){
                 ss << ' ';
